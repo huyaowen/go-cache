@@ -5,6 +5,7 @@ import "time"
 const (
 	REDIS  = "redis"
 	MEMORY = "memory"
+	MONGO  = "mongo"
 )
 
 type backend interface {
@@ -25,6 +26,8 @@ func Backend(backend string) backend {
 	case REDIS:
 		return
 	case MEMORY:
+		return
+	case MONGO:
 		return
 	default:
 		return

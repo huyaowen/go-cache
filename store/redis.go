@@ -1,10 +1,8 @@
 package store
 
 import (
-	"beego"
 	"log"
 	"strconv"
-	"strings"
 
 	"github.com/garyburd/redigo/redis"
 )
@@ -23,7 +21,7 @@ func instance() *redis_store {
 
 	var rp *redis_store = new(redis_store)
 
-	configs := strings.Split(beego.AppConfig.String("sessionproviderconfig"), ",")
+	configs := []string{"", "", ""} //redis config strings
 
 	if len(configs) > 0 {
 		rp.savePath = configs[0]

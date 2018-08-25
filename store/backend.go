@@ -13,24 +13,28 @@ type backend interface {
 
 	Set(key, value interface{}, duration time.Duration) (err error)
 
-	Delete(key interface{}) (err error)
+	SetE(key, value interface{}, duration time.Duration) (err error)
+
+	Delete(key interface{}) (v interface{}, err error)
+
+	DeleteExpired() (err error)
 
 	Flush() (err error)
 
-	Keys() (keys interface{}, err error)
+	Keys() (keys []interface{}, err error)
 }
 
 func Backend(backend string) backend {
 
 	switch backend {
 	case REDIS:
-		return
+		return nil
 	case MEMORY:
-		return
+		return NewMemoryStore(DefaultExpiration, DefaultCleanupInterval)
 	case MONGO:
-		return
+		return nil
 	default:
-		return
+		return nil
 	}
 
 }

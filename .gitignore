@@ -1,0 +1,32 @@
+# Go 模块文件
+go.mod
+go.sum
+
+# 构建输出
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 测试二进制
+*.test
+
+# 覆盖率文件
+coverage.out
+*.out
+
+# 依赖
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 临时文件
+tmp/
+temp/

@@ -76,21 +76,38 @@ func (p *proxyImpl) Call(methodName string, args []reflect.Value) []reflect.Valu
 
 最初的方案需要用户手动调用 `cache.Decorate()`，但这不够优雅。
 
-**最终方案**：**全局变量 + init() 自动装饰**
+**最终方案**：**接口模式 + DecorateAndReturn**
 
 ```go
-// 1. 定义全局变量
-var UserService = &UserService{}
-
-// 2. 添加注解
-// @cacheable(cache="users", key="#id", ttl="30m")
-func (s *UserService) GetUser(id string) (*User, error) {
-    return db.FindUser(id)
+// 1. 定义接口
+type UserServiceInterface interface {
+    GetUser(id string) (*User, error)
 }
 
-// 3. init() 自动装饰
+// 2. 实现接口并添加注解
+type UserService struct {
+    db *gorm.DB
+}
+
+// @cacheable(cache="users", key="#id", ttl="30m")
+func (s *UserService) GetUser(id string) (*User, error) {
+    var u User
+    err := s.db.Where("id = ?", id).First(&u).Error
+    return &u, err
+}
+
+// 3. init() 创建代理
+var UserService UserServiceInterface
+
 func init() {
-    cache.AutoDecorate(&UserService)
+    manager := core.NewCacheManager()
+    autoDecorate := proxy.GetAutoDecorate(manager)
+    decorated, err := autoDecorate.DecorateAndReturn(&UserService{})
+    if err != nil {
+        UserService = &UserService{}
+        return
+    }
+    UserService = decorated.(UserServiceInterface)
 }
 
 // 使用时（完全透明）
@@ -166,7 +183,7 @@ func (s *UserService) DeleteUser(userId string) error {
 
 ---
 
-## 缓存异常保护
+## 🛡️ 缓存异常保护
 
 ### 缓存穿透（查询不存在的数据）
 
@@ -210,42 +227,97 @@ ttl := baseTTL + time.Duration(rand.Int63n(jitter))
 
 ## 快速开始
 
-### 安装
+### 1. 安装
 
 ```bash
 go get github.com/coderiser/go-cache
 ```
 
-### 使用示例
+### 2. 定义服务接口和实现
 
 ```go
 package service
 
-import "github.com/coderiser/go-cache"
+// 定义接口
+type UserServiceInterface interface {
+    GetUser(id string) (*User, error)
+}
 
-var UserService = &UserService{}
-
+// 实现接口
 type UserService struct {
     db *gorm.DB
 }
 
+// 添加缓存注解
 // @cacheable(cache="users", key="#id", ttl="30m")
 func (s *UserService) GetUser(id string) (*User, error) {
     var u User
     err := s.db.Where("id = ?", id).First(&u).Error
     return &u, err
 }
+```
+
+### 3. 初始化（使用 DecorateAndReturn）
+
+```go
+package service
+
+import (
+    "github.com/coderiser/go-cache/pkg/core"
+    "github.com/coderiser/go-cache/pkg/proxy"
+)
+
+var UserService UserServiceInterface
 
 func init() {
-    cache.AutoDecorate(&UserService)
+    manager := core.NewCacheManager()
+    autoDecorate := proxy.GetAutoDecorate(manager)
+    decorated, err := autoDecorate.DecorateAndReturn(&UserService{})
+    if err != nil {
+        UserService = &UserService{}
+        return
+    }
+    UserService = decorated.(UserServiceInterface)
 }
 ```
 
-### 生成元数据
+### 4. 生成元数据
 
 ```bash
+# 安装代码生成器
+go install github.com/coderiser/go-cache/cmd/generator@latest
+
+# 生成注解元数据
 go-cache-gen ./...
 ```
+
+### 5. 使用（完全透明）
+
+```go
+// 通过接口调用，自动应用缓存
+user, err := UserService.GetUser("123")  // 自动缓存！
+```
+
+---
+
+## 🎯 Go 语言接口模式说明
+
+由于 Go 语言没有运行时注解，本框架采用**接口模式**：
+
+### 核心思路
+
+1. **定义接口**：为服务定义清晰的接口
+2. **注解标注**：在实现的方法上添加 `// @cacheable(...)` 注释
+3. **代码生成**：使用 `go-cache-gen` 生成注解元数据
+4. **代理装饰**：通过 `DecorateAndReturn` 创建代理对象
+5. **接口调用**：通过接口变量调用，自动应用缓存
+
+### 为什么需要接口？
+
+Go 的反射系统无法直接修改方法调用，但可以通过：
+- 创建代理对象实现相同接口
+- 拦截接口方法调用
+- 在调用前后执行缓存逻辑
 
 ---
 
@@ -256,18 +328,59 @@ go-cache-gen ./...
 | SpEL 引擎 | `expr` | 纯 Go 实现，性能优秀 |
 | Redis 客户端 | `go-redis/v9` | 社区活跃，功能完整 |
 | AST 解析 | `go/packages` | 官方标准库 |
-| 动态代理 | `reflect.MakeFunc` | 运行时反射 |
+| 动态代理 | `reflect` | 运行时反射 |
 
 ---
 
-## 项目地址
+## 📚 文档
 
-**GitHub**: https://github.com/coderiser/go-cache
+- [架构设计](docs/ARCHITECTURE.md)
+- [接口定义](docs/INTERFACE_SPEC.md)
+- [集成指南](docs/INTEGRATION_GUIDE.md)
 
-**文档**: 
-- [架构设计](https://github.com/coderiser/go-cache/blob/main/docs/ARCHITECTURE.md)
-- [接口定义](https://github.com/coderiser/go-cache/blob/main/docs/INTERFACE_SPEC.md)
-- [集成指南](https://github.com/coderiser/go-cache/blob/main/docs/INTEGRATION_GUIDE.md)
+## 📦 安装
+
+```bash
+go get github.com/coderiser/go-cache
+```
+
+## 🧪 测试
+
+```bash
+# 运行测试
+go test ./...
+
+# 覆盖率报告
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+
+# 性能基准
+go test -bench=. -benchmem ./...
+```
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📄 许可证
+
+MIT License - 详见 [LICENSE](LICENSE) 文件
+
+---
+
+**Made with ❤️ by Go-Cache Team**
+
+---
+
+## 📊 性能表现
+
+| 场景 | 延迟 |
+|------|------|
+| Memory 命中 | < 1ms |
+| Redis 命中 | < 5ms |
+| SpEL 求值 | < 50μs |
+
+测试覆盖率：**83%+**
 
 ---
 
@@ -277,16 +390,12 @@ go-cache-gen ./...
 
 ✅ 零侵入业务代码  
 ✅ 注解驱动缓存逻辑  
-✅ 运行时自动代理  
+✅ 运行时自动代理（接口模式）  
 ✅ 多后端支持  
 ✅ 高性能表现  
 
-虽然 Go 没有 Java 那样的注解和 AOP，但我们找到了 Go 语言下的最优解 —— **一行 init() + go generate**，既保持了 Go 的简洁性，又获得了接近 Spring Cache 的开发体验。
+虽然 Go 没有 Java 那样的注解和 AOP，但我们找到了 Go 语言下的最优解 —— **接口模式 + DecorateAndReturn**，既保持了 Go 的简洁性，又获得了接近 Spring Cache 的开发体验。
 
 ---
 
-*欢迎 Star、Fork、提 Issue！*
-
----
-
-**（完）**
+**Made with ❤️ by Go-Cache Team**

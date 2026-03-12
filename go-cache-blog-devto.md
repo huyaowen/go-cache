@@ -79,21 +79,38 @@ func (p *proxyImpl) Call(methodName string, args []reflect.Value) []reflect.Valu
 
 The initial design required users to manually call `cache.Decorate()`, which wasn't elegant enough.
 
-**Final Solution**: **Global Variable + init() Auto-Decoration**
+**Final Solution**: **Interface Pattern + DecorateAndReturn**
 
 ```go
-// 1. Define global variable
-var UserService = &UserService{}
-
-// 2. Add annotation
-// @cacheable(cache="users", key="#id", ttl="30m")
-func (s *UserService) GetUser(id string) (*User, error) {
-    return db.FindUser(id)
+// 1. Define interface
+type UserServiceInterface interface {
+    GetUser(id string) (*User, error)
 }
 
-// 3. init() auto-decoration
+// 2. Implement interface with annotation
+type UserService struct {
+    db *gorm.DB
+}
+
+// @cacheable(cache="users", key="#id", ttl="30m")
+func (s *UserService) GetUser(id string) (*User, error) {
+    var u User
+    err := s.db.Where("id = ?", id).First(&u).Error
+    return &u, err
+}
+
+// 3. init() creates proxy
+var UserService UserServiceInterface
+
 func init() {
-    cache.AutoDecorate(&UserService)
+    manager := core.NewCacheManager()
+    autoDecorate := proxy.GetAutoDecorate(manager)
+    decorated, err := autoDecorate.DecorateAndReturn(&UserService{})
+    if err != nil {
+        UserService = &UserService{}
+        return
+    }
+    UserService = decorated.(UserServiceInterface)
 }
 
 // Usage (completely transparent)
@@ -244,35 +261,69 @@ Test Coverage: **83%+**
 go get github.com/coderiser/go-cache
 ```
 
-### Example
+### 1. Define Service Interface
 
 ```go
 package service
 
-import "github.com/coderiser/go-cache"
+// Define interface
+type UserServiceInterface interface {
+    GetUser(id string) (*User, error)
+}
 
-var UserService = &UserService{}
-
+// Implement interface
 type UserService struct {
     db *gorm.DB
 }
 
+// Add cache annotation
 // @cacheable(cache="users", key="#id", ttl="30m")
 func (s *UserService) GetUser(id string) (*User, error) {
     var u User
     err := s.db.Where("id = ?", id).First(&u).Error
     return &u, err
 }
+```
+
+### 2. Initialize (using DecorateAndReturn)
+
+```go
+package service
+
+import (
+    "github.com/coderiser/go-cache/pkg/core"
+    "github.com/coderiser/go-cache/pkg/proxy"
+)
+
+var UserService UserServiceInterface
 
 func init() {
-    cache.AutoDecorate(&UserService)
+    manager := core.NewCacheManager()
+    autoDecorate := proxy.GetAutoDecorate(manager)
+    decorated, err := autoDecorate.DecorateAndReturn(&UserService{})
+    if err != nil {
+        UserService = &UserService{}
+        return
+    }
+    UserService = decorated.(UserServiceInterface)
 }
 ```
 
-### Generate Metadata
+### 3. Generate Metadata
 
 ```bash
+# Install code generator
+go install github.com/coderiser/go-cache/cmd/generator@latest
+
+# Generate annotation metadata
 go-cache-gen ./...
+```
+
+### 4. Usage (Transparent)
+
+```go
+// Call through interface, caching applied automatically
+user, err := UserService.GetUser("123")  // Automatic caching!
 ```
 
 ---
@@ -284,7 +335,7 @@ go-cache-gen ./...
 | SpEL Engine | `expr` | Pure Go, excellent performance |
 | Redis Client | `go-redis/v9` | Active community, feature-complete |
 | AST Parsing | `go/packages` | Official standard library |
-| Dynamic Proxy | `reflect.MakeFunc` | Runtime reflection |
+| Dynamic Proxy | `reflect` | Runtime reflection |
 
 ---
 
@@ -293,9 +344,9 @@ go-cache-gen ./...
 **GitHub**: https://github.com/coderiser/go-cache
 
 **Documentation**: 
-- [Architecture Design](https://github.com/coderiser/go-cache/blob/main/docs/ARCHITECTURE.md)
-- [Interface Specification](https://github.com/coderiser/go-cache/blob/main/docs/INTERFACE_SPEC.md)
-- [Integration Guide](https://github.com/coderiser/go-cache/blob/main/docs/INTEGRATION_GUIDE.md)
+- [Architecture Design](docs/ARCHITECTURE.md)
+- [Interface Specification](docs/INTERFACE_SPEC.md)
+- [Integration Guide](docs/INTEGRATION_GUIDE.md)
 
 ---
 

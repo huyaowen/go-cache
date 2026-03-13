@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -389,7 +391,11 @@ func init() {
 	code += "}\n"
 
 	outputPath := filepath.Join(outputDir, "auto_register.go")
-	err := os.WriteFile(outputPath, []byte(code), 0644)
+	
+	// 格式化代码
+	formattedCode := formatCode(code)
+	
+	err := os.WriteFile(outputPath, []byte(formattedCode), 0644)
 	if err != nil {
 		fmt.Printf("❌ Error writing generated code: %v\n", err)
 		os.Exit(1)
@@ -488,15 +494,8 @@ func generateCachedServiceForInterface(interfaceName string, interfaceInfo *Inte
 		}
 	}
 	
-	// 构建导入语句 (支持别名)
-	var imports []string
-	for imp, alias := range importsMap {
-		if alias != "" {
-			imports = append(imports, fmt.Sprintf("\t%s \"%s\"", alias, imp))
-		} else {
-			imports = append(imports, fmt.Sprintf("\t\"%s\"", imp))
-		}
-	}
+	// 构建导入语句 (支持别名，排序)
+	imports := sortImports(importsMap)
 	importsStr := strings.Join(imports, "\n")
 	
 	timestamp := time.Now().Format(time.RFC3339)
@@ -576,8 +575,11 @@ type %s struct {
 	// 添加接口实现检查
 	code += fmt.Sprintf("\n// 确保实现接口\nvar _ service.%s = (*%s)(nil)\n", interfaceName, cachedTypeName)
 
+	// 格式化代码
+	formattedCode := formatCode(code)
+
 	// 写入文件
-	if err := os.WriteFile(outputPath, []byte(code), 0644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(formattedCode), 0644); err != nil {
 		fmt.Printf("❌ Error writing wrapper code: %v\n", err)
 		return
 	}
@@ -715,7 +717,7 @@ func generateCacheableMethod(method *MethodInfo, ann *CacheAnnotation, cachedTyp
 	params := buildParamList(method.Params)
 	argNames := buildArgNames(method.Params)
 	resultTypes := buildResultTypes(method.Results)
-	firstArg := extractFirstArg(method.Params)
+	keyExpr := buildKeyExpression(method.Params, method.Results, ann.Key)
 	
 	code := fmt.Sprintf(`
 // %s 带缓存的实现（@cacheable）
@@ -748,7 +750,7 @@ func (c *%s) %s(%s) %s {
 }
 `, method.Name, cachedTypeName, method.Name, params, resultTypes,
 		ann.CacheName, method.Name, argNames,
-		ann.CacheName, firstArg,
+		ann.CacheName, keyExpr,
 		method.ResultType,
 		method.Name, argNames,
 		ann.TTL)
@@ -761,7 +763,7 @@ func generateCachePutMethod(method *MethodInfo, ann *CacheAnnotation, cachedType
 	params := buildParamList(method.Params)
 	argNames := buildArgNames(method.Params)
 	resultTypes := buildResultTypes(method.Results)
-	firstArg := extractFirstArg(method.Params)
+	keyExpr := buildKeyExpression(method.Params, method.Results, ann.Key)
 	
 	code := fmt.Sprintf(`
 // %s 带缓存更新的实现（@cacheput）
@@ -790,7 +792,7 @@ func (c *%s) %s(%s) %s {
 `, method.Name, cachedTypeName, method.Name, params, resultTypes,
 		method.Name, argNames,
 		ann.CacheName,
-		ann.CacheName, firstArg,
+		ann.CacheName, keyExpr,
 		ann.TTL)
 	
 	return code
@@ -801,7 +803,7 @@ func generateCacheEvictMethod(method *MethodInfo, ann *CacheAnnotation, cachedTy
 	params := buildParamList(method.Params)
 	argNames := buildArgNames(method.Params)
 	resultTypes := buildResultTypes(method.Results)
-	firstArg := extractFirstArg(method.Params)
+	keyExpr := buildKeyExpression(method.Params, method.Results, ann.Key)
 	
 	code := fmt.Sprintf(`
 // %s 带缓存清除的实现（@cacheevict）
@@ -829,7 +831,7 @@ func (c *%s) %s(%s) %s {
 `, method.Name, cachedTypeName, method.Name, params, resultTypes,
 		method.Name, argNames,
 		ann.CacheName,
-		ann.CacheName, firstArg)
+		ann.CacheName, keyExpr)
 	
 	return code
 }
@@ -892,16 +894,82 @@ func buildResultTypes(results []ParamInfo) string {
 	return "(" + strings.Join(resultTypes, ", ") + ")"
 }
 
-// extractFirstArg 提取第一个参数（用于生成缓存 Key）
-func extractFirstArg(params []ParamInfo) string {
+// buildKeyExpression 根据 SpEL 表达式构建 Key 生成代码
+// 支持：#paramName, #result.fieldName, 字符串拼接
+// 返回完整的 key 生成表达式，如：fmt.Sprintf("users:%v", id)
+func buildKeyExpression(params []ParamInfo, results []ParamInfo, keyExpr string) string {
+	// 处理 #result.XXX 表达式
+	if strings.HasPrefix(keyExpr, "#result.") {
+		fieldName := strings.TrimPrefix(keyExpr, "#result.")
+		return fmt.Sprintf(`fmt.Sprintf("%%v", result.%s)`, fieldName)
+	}
+	
+	// 处理简单参数 #paramName
+	if strings.HasPrefix(keyExpr, "#") {
+		paramName := strings.TrimPrefix(keyExpr, "#")
+		// 直接使用参数名（不查找，因为 SpEL 表达式可能使用字段名）
+		return fmt.Sprintf(`fmt.Sprintf("%%v", %s)`, paramName)
+	}
+	
+	// 处理复杂表达式：#user.Id + ':' + #status
+	if strings.Contains(keyExpr, "+") {
+		return buildComplexKeyExpression(params, keyExpr)
+	}
+	
+	// 默认：使用第一个参数
 	if len(params) == 0 {
-		return "\"default\""
+		return `fmt.Sprintf("%v", "default")`
 	}
-	name := params[0].Name
-	if name == "_" || name == "" {
-		return "arg0"
+	firstParam := params[0].Name
+	if firstParam == "_" || firstParam == "" {
+		firstParam = "arg0"
 	}
-	return name
+	return fmt.Sprintf(`fmt.Sprintf("%%v", %s)`, firstParam)
+}
+
+// buildComplexKeyExpression 构建复杂 Key 表达式
+func buildComplexKeyExpression(params []ParamInfo, expr string) string {
+	// 简单实现：分割 + 号，处理每个部分
+	parts := strings.Split(expr, "+")
+	var formatParts []string
+	var valueParts []string
+	
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "#") {
+			// 参数引用
+			paramName := strings.TrimPrefix(part, "#")
+			// 处理嵌套字段：user.Id -> user.Id
+			if strings.Contains(paramName, ".") {
+				// 直接使用（假设是有效的 Go 表达式）
+				formatParts = append(formatParts, "%v")
+				valueParts = append(valueParts, paramName)
+			} else {
+				// 简单参数
+				formatParts = append(formatParts, "%v")
+				// 查找参数名
+				found := false
+				for _, param := range params {
+					if param.Name == paramName {
+						valueParts = append(valueParts, paramName)
+						found = true
+						break
+					}
+				}
+				if !found {
+					valueParts = append(valueParts, paramName)
+				}
+			}
+		} else if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
+			// 字符串字面量
+			str := strings.Trim(part, "'")
+			formatParts = append(formatParts, str)
+		}
+	}
+	
+	formatStr := strings.Join(formatParts, "")
+	valuesStr := strings.Join(valueParts, ", ")
+	return fmt.Sprintf("fmt.Sprintf(\"%s\", %s)", formatStr, valuesStr)
 }
 
 func countAnnotations(annotations map[string]map[string]*CacheAnnotation) int {
@@ -910,4 +978,31 @@ func countAnnotations(annotations map[string]map[string]*CacheAnnotation) int {
 		total += len(methods)
 	}
 	return total
+}
+
+// formatCode 使用 gofmt 格式化代码
+func formatCode(code string) string {
+	formatted, err := format.Source([]byte(code))
+	if err != nil {
+		// 格式化失败，返回原始代码
+		fmt.Printf("⚠️  Code formatting failed: %v\n", err)
+		return code
+	}
+	return string(formatted)
+}
+
+// sortImports 对导入语句排序（用于生成更一致的代码）
+func sortImports(importsMap map[string]string) []string {
+	imports := make([]string, 0, len(importsMap))
+	for imp, alias := range importsMap {
+		if alias != "" {
+			imports = append(imports, fmt.Sprintf("\t%s \"%s\"", alias, imp))
+		} else {
+			imports = append(imports, fmt.Sprintf("\t\"%s\"", imp))
+		}
+	}
+	sort.Slice(imports, func(i, j int) bool {
+		return imports[i] < imports[j]
+	})
+	return imports
 }

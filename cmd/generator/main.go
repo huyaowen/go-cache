@@ -58,6 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	scanDir := os.Args[1]  // 使用第一个目录推导包路径
 	dirs := os.Args[1:]
 	fmt.Printf("🔍 Scanning %d directory/directories...\n", len(dirs))
 
@@ -93,7 +94,7 @@ func main() {
 		return
 	}
 
-	generateCode(allAnnotations, allInterfaces)
+	generateCode(allAnnotations, allInterfaces, scanDir)
 	fmt.Println("✅ Code generation complete!")
 }
 
@@ -326,12 +327,12 @@ func parseAnnotation(comment string) *CacheAnnotation {
 	return annotation
 }
 
-func generateCode(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo) {
+func generateCode(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo, scanDir string) {
 	// 1. 生成注解注册代码
 	generateAnnotationRegistration(annotations)
 	
 	// 2. 生成接口包装器代码
-	generateInterfaceWrappers(annotations, interfaces)
+	generateInterfaceWrappers(annotations, interfaces, scanDir)
 }
 
 // generateAnnotationRegistration 生成注解注册代码
@@ -408,7 +409,7 @@ func init() {
 }
 
 // generateInterfaceWrappers 生成接口包装器代码（方案 G：Beego 融合版）
-func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo) {
+func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo, scanDir string) {
 	// 找出有注解的接口，为它们生成包装器
 	for interfaceName, interfaceInfo := range interfaces {
 		// 检查是否有对应的实现类型有注解
@@ -434,12 +435,12 @@ func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotatio
 		}
 		
 		// 生成包装器代码（方案 G）
-		generateCachedServiceForInterface(interfaceName, interfaceInfo, expectedImpl, annotations[expectedImpl])
+		generateCachedServiceForInterface(interfaceName, interfaceInfo, expectedImpl, annotations[expectedImpl], scanDir)
 	}
 }
 
 // generateCachedServiceForInterface 为单个接口生成缓存服务（方案 G）
-func generateCachedServiceForInterface(interfaceName string, interfaceInfo *InterfaceInfo, implName string, typeAnnotations map[string]*CacheAnnotation) {
+func generateCachedServiceForInterface(interfaceName string, interfaceInfo *InterfaceInfo, implName string, typeAnnotations map[string]*CacheAnnotation, scanDir string) {
 	// serviceName 是大写开头的服务名（用于类型名，如 UserService）
 	serviceName := strings.TrimSuffix(interfaceName, "Interface")
 	// cachedTypeName 是缓存装饰器类型名（如 cachedProductService）
@@ -457,9 +458,10 @@ func generateCachedServiceForInterface(interfaceName string, interfaceInfo *Inte
 	// 使用别名避免包名冲突
 	importsMap["github.com/coderiser/go-cache/pkg/cache"] = "gocache"
 	
-	// 检查是否需要 model 包导入
-	currentDir, _ := os.Getwd()
-	dirName := filepath.Base(currentDir)
+	// 从扫描目录推导 model 包路径
+	// scanDir 如：examples/gin-web 或 examples/cron-job
+	dirName := filepath.Base(scanDir)
+	// 推导模块路径：从 go.mod 读取或根据目录结构推导
 	modelPath := fmt.Sprintf("github.com/coderiser/go-cache/examples/%s/model", dirName)
 	
 	for _, method := range interfaceInfo.Methods {

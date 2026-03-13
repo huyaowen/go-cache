@@ -22,6 +22,12 @@
 
 ## 📦 快速开始
 
+### 0️⃣ 安装
+
+```bash
+go get github.com/coderiser/go-cache@latest
+```
+
 ### 1️⃣ 添加注解
 
 ```go

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-cache-framework/pkg/backend"
+	"github.com/coderiser/go-cache/pkg/backend"
 )
 
 func TestCacheManager(t *testing.T) {

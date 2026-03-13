@@ -1,0 +1,46 @@
+version: '3.8'
+
+# Go-Cache Framework 测试环境
+# 用于集成测试的 Docker Compose 配置
+
+services:
+  # Redis 服务 - 用于 Redis 后端集成测试
+  redis:
+    image: redis:7-alpine
+    container_name: go-cache-redis-test
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - go-cache-test
+
+  # 测试运行器 - 运行 Go 测试
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.test
+    container_name: go-cache-test-runner
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_ADDR=redis:6379
+    command: go test ./tests/integration/... -v -race
+    networks:
+      - go-cache-test
+    volumes:
+      - ../../..:/go/src/github.com/coderiser/go-cache
+
+volumes:
+  redis-data:
+
+networks:
+  go-cache-test:
+    driver: bridge

@@ -1,0 +1,36 @@
+# Go-Cache Framework Configuration
+# 缓存配置文件示例
+
+caches:
+  # 用户缓存 - 使用 Redis 后端
+  users:
+    backend: redis
+    addr: localhost:6379
+    password: ""
+    db: 0
+    prefix: "user:"
+    default_ttl: 30m
+    max_ttl: 24h
+
+  # 产品缓存 - 使用内存后端
+  products:
+    backend: memory
+    max_size: 10000
+    prefix: "product:"
+    default_ttl: 1h
+    max_ttl: 12h
+
+  # 会话缓存 - 使用 Redis 后端
+  sessions:
+    backend: redis
+    addr: localhost:6379
+    db: 1
+    prefix: "session:"
+    default_ttl: 2h
+    max_ttl: 24h
+
+  # 本地测试缓存 - 使用内存后端
+  local:
+    backend: memory
+    max_size: 1000
+    default_ttl: 5m

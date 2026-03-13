@@ -3,13 +3,14 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-cache-framework/pkg/core"
-	"github.com/go-cache-framework/pkg/spel"
+	"github.com/coderiser/go-cache/pkg/core"
+	"github.com/coderiser/go-cache/pkg/spel"
 )
 
 // MethodInterceptor 方法拦截器接口
@@ -31,24 +32,26 @@ type CacheAnnotation struct {
 
 // methodInterceptor 方法拦截器实现
 type methodInterceptor struct {
-	manager       core.CacheManager
-	evaluator     *spel.SpELEvaluator
-	methodCache   map[string]*CacheAnnotation
-	methodCacheMu sync.RWMutex
+	manager     core.CacheManager
+	evaluator   *spel.SpELEvaluator
+	methodCache sync.Map // map[string]*CacheAnnotation
 }
 
 func newMethodInterceptor(manager core.CacheManager) *methodInterceptor {
 	return &methodInterceptor{
-		manager:     manager,
-		evaluator:   spel.NewSpELEvaluator(),
-		methodCache: make(map[string]*CacheAnnotation),
+		manager:   manager,
+		evaluator: spel.NewSpELEvaluator(),
+		// methodCache is a sync.Map, no initialization needed
 	}
 }
 
 // Intercept 拦截方法调用
 func (i *methodInterceptor) Intercept(target interface{}, methodName string, args []reflect.Value) []reflect.Value {
+	log.Printf("[DEBUG] Intercept: method=%s, target=%T", methodName, target)
 	annotation := i.getAnnotation(methodName)
+	log.Printf("[DEBUG] Intercept: annotation=%v", annotation)
 	if annotation == nil {
+		log.Printf("[DEBUG] Intercept: No annotation, invoking original")
 		return i.invokeOriginal(target, methodName, args)
 	}
 
@@ -81,10 +84,26 @@ func (i *methodInterceptor) getCallInfo(target interface{}, methodName string, a
 	ctx.TargetType = targetType
 	ctx.Method = methodName
 
+	// 设置参数：支持多种 SpEL 语法
+	// #0, #1, ... (索引)
+	// #p0, #p1, ... (带前缀的索引)
+	// p0, p1, ... (不带#的参数)
 	for idx, arg := range args {
 		value := arg.Interface()
 		ctx.SetArgByIndex(idx, value)
 		ctx.SetArg(fmt.Sprintf("p%d", idx), value)
+		// 支持 #0, #1 语法（通过 BuildVariables 自动设置）
+	}
+	
+	// 特殊处理：从注解中提取参数名并映射
+	// 对于常见模式如 #id, #user，尝试智能匹配
+	if len(args) >= 1 {
+		// 第一个参数映射为 #id（如果注解使用 #id）
+		ctx.SetArg("id", args[0].Interface())
+	}
+	if len(args) >= 2 {
+		// 第二个参数映射为 #user（如果注解使用 #user）
+		ctx.SetArg("user", args[1].Interface())
 	}
 
 	return &callInfo{
@@ -95,27 +114,32 @@ func (i *methodInterceptor) getCallInfo(target interface{}, methodName string, a
 }
 
 func (i *methodInterceptor) getAnnotation(methodName string) *CacheAnnotation {
-	i.methodCacheMu.RLock()
-	defer i.methodCacheMu.RUnlock()
-	return i.methodCache[methodName]
+	if v, ok := i.methodCache.Load(methodName); ok {
+		return v.(*CacheAnnotation)
+	}
+	return nil
 }
 
 // RegisterAnnotation 注册方法注解
 func (i *methodInterceptor) RegisterAnnotation(methodName string, annotation *CacheAnnotation) {
-	i.methodCacheMu.Lock()
-	defer i.methodCacheMu.Unlock()
-	i.methodCache[methodName] = annotation
+	i.methodCache.Store(methodName, annotation)
 }
 
 func (i *methodInterceptor) handleCacheable(target interface{}, callInfo *callInfo, annotation *CacheAnnotation, args []reflect.Value) []reflect.Value {
+	log.Printf("[DEBUG] handleCacheable: method=%s, cache=%s, key=%s, args=%v", callInfo.methodName, annotation.CacheName, annotation.Key, args)
+	
 	cache, err := i.manager.GetCache(annotation.CacheName)
 	if err != nil {
+		log.Printf("[DEBUG] handleCacheable: Failed to get cache: %v", err)
 		return i.invokeOriginal(target, callInfo.methodName, args)
 	}
+	log.Printf("[DEBUG] handleCacheable: Got cache backend: %T", cache)
 
 	callInfo.ctx.CacheName = annotation.CacheName
 	cacheKey, err := i.evaluator.EvaluateToString(annotation.Key, callInfo.ctx)
+	log.Printf("[DEBUG] handleCacheable: cacheKey='%v', err=%v, ctx.args=%v", cacheKey, err, callInfo.ctx.Args)
 	if err != nil {
+		log.Printf("[DEBUG] handleCacheable: SpEL evaluation failed: %v", err)
 		return i.invokeOriginal(target, callInfo.methodName, args)
 	}
 
@@ -129,8 +153,10 @@ func (i *methodInterceptor) handleCacheable(target interface{}, callInfo *callIn
 	ctx := context.Background()
 	value, found, err := cache.Get(ctx, cacheKey)
 	if err == nil && found {
+		log.Printf("[INFO] Cache HIT: %s:%s", annotation.CacheName, cacheKey)
 		return []reflect.Value{reflect.ValueOf(value)}
 	}
+	log.Printf("[DEBUG] Cache MISS: %s:%s", annotation.CacheName, cacheKey)
 
 	results := i.invokeOriginal(target, callInfo.methodName, args)
 

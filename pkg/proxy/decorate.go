@@ -5,12 +5,13 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/go-cache-framework/pkg/core"
+	"github.com/coderiser/go-cache/pkg/core"
 )
 
 // AutoDecorate 自动装饰器接口
 type AutoDecorate interface {
 	Decorate(target interface{}) error
+	DecorateAndReturn(target interface{}) (Proxy, error)
 	Register(name string, target interface{}) error
 	GetProxy(name string) (Proxy, error)
 	GetAllProxies() map[string]Proxy
@@ -162,6 +163,72 @@ func (a *autoDecorateImpl) GetAllProxies() map[string]Proxy {
 		result[k] = v
 	}
 	return result
+}
+
+// DecorateAndReturn 装饰目标对象并返回代理对象
+// 返回的 Proxy 接口提供 Call 方法用于调用目标方法
+//
+// 使用示例：
+//   type UserService struct { ... }
+//   func (s *UserService) GetUser(id int) *User { ... }
+//
+//   var proxyService proxy.Proxy
+//   func init() {
+//       manager := core.NewCacheManager()
+//       userService := &UserService{}
+//       factory := proxy.NewProxyFactory(manager)
+//       proxyObj, _ := factory.Create(userService)
+//       proxyService = proxyObj.(proxy.Proxy)
+//       // 注册注解
+//       annotations := proxy.GetRegisteredAnnotations("UserService")
+//       for name, ann := range annotations {
+//           proxyService.RegisterAnnotation(name, ann)
+//       }
+//   }
+//
+//   // 调用方法
+//   results := proxyService.Call("GetUser", []reflect.Value{reflect.ValueOf(1)})
+//   user := results[0].Interface().(*User)
+func (a *autoDecorateImpl) DecorateAndReturn(target interface{}) (Proxy, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if target == nil {
+		return nil, fmt.Errorf("target cannot be nil")
+	}
+
+	targetValue := reflect.ValueOf(target)
+	if targetValue.Kind() != reflect.Ptr || targetValue.IsNil() {
+		return nil, fmt.Errorf("target must be a non-nil pointer")
+	}
+
+	proxy, err := a.factory.Create(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create proxy: %w", err)
+	}
+
+	targetType := reflect.TypeOf(target)
+	name := targetType.Elem().Name()
+	if name == "" {
+		name = fmt.Sprintf("anonymous_%p", target)
+	}
+
+	// 注册注解到拦截器
+	impl, ok := proxy.(*proxyImpl)
+	if ok {
+		interceptor := impl.GetInterceptor()
+		annotations := GetRegisteredAnnotations(name)
+		if annotations != nil {
+			for methodName, annotation := range annotations {
+				interceptor.RegisterAnnotation(methodName, annotation)
+			}
+		}
+	}
+
+	a.proxies[name] = proxy
+
+	// 返回 Proxy 接口（调用者使用 Call 方法调用）
+	return a.proxies[name], nil
 }
 
 // 全局注解注册表

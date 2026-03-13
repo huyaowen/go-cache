@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// NilMarker 空值标记，用于缓存穿透保护（导出供其他包使用）
+const NilMarker = "__GO_CACHE_NIL__"
+
 // CacheBackend 缓存后端接口（本地定义避免循环导入）
 type CacheBackend interface {
 	Get(ctx context.Context, key string) (interface{}, bool, error)

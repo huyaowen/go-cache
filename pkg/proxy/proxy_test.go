@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-cache-framework/pkg/core"
-	"github.com/go-cache-framework/pkg/spel"
+	"github.com/coderiser/go-cache/pkg/core"
+	"github.com/coderiser/go-cache/pkg/spel"
 )
 
 // TestService for proxy testing

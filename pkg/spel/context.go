@@ -2,6 +2,7 @@ package spel
 
 import (
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -70,8 +71,20 @@ func (c *EvaluationContext) GetExtra(k string) (interface{}, bool) {
 
 func (c *EvaluationContext) BuildVariables() map[string]interface{} {
 	vars := make(map[string]interface{})
-	for n, v := range c.Args { vars[n] = v }
-	for i, v := range c.ArgValues { vars["#"+itoa(i)] = v }
+	// Add named args (p0, p1, id, user, etc.) and also support #name syntax
+	for n, v := range c.Args {
+		vars[n] = v
+		// Support #name syntax for named args (e.g., #id, #user)
+		if !strings.HasPrefix(n, "#") {
+			vars["#"+n] = v
+		}
+	}
+	// Add indexed args (#0, #1, etc.) and also p0, p1 for compatibility
+	for i, v := range c.ArgValues {
+		idxStr := itoa(i)
+		vars["#"+idxStr] = v
+		vars["p"+idxStr] = v
+	}
 	if c.Result != nil { vars["result"] = c.Result; vars["returnValue"] = c.Result }
 	if c.Target != nil { vars["target"] = c.Target; vars["this"] = c.Target }
 	if c.Method != "" { vars["method"] = c.Method }

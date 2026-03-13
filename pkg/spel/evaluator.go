@@ -3,6 +3,7 @@ package spel
 import (
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/antonmedv/expr"
 	"github.com/antonmedv/expr/vm"
@@ -10,6 +11,7 @@ import (
 
 // SpELEvaluator 表达式求值器
 type SpELEvaluator struct {
+	mu    sync.RWMutex
 	cache map[string]*vm.Program
 }
 
@@ -72,26 +74,36 @@ func (e *SpELEvaluator) EvaluateToInt(exprStr string, ctx *EvaluationContext) (i
 }
 
 func (e *SpELEvaluator) compile(exprStr string) (*vm.Program, error) {
+	e.mu.RLock()
 	if program, ok := e.cache[exprStr]; ok {
+		e.mu.RUnlock()
 		return program, nil
 	}
+	e.mu.RUnlock()
 
 	program, err := expr.Compile(exprStr, expr.AllowUndefinedVariables())
 	if err != nil {
 		return nil, &CompilationError{Expression: exprStr, Err: err}
 	}
 
+	e.mu.Lock()
 	e.cache[exprStr] = program
+	e.mu.Unlock()
+
 	return program, nil
 }
 
 // ClearCache 清除缓存
 func (e *SpELEvaluator) ClearCache() {
+	e.mu.Lock()
 	e.cache = make(map[string]*vm.Program)
+	e.mu.Unlock()
 }
 
 // CacheSize 获取缓存大小
 func (e *SpELEvaluator) CacheSize() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return len(e.cache)
 }
 

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-cache-framework/pkg/backend"
-	"github.com/go-cache-framework/pkg/core"
+	"github.com/coderiser/go-cache/pkg/backend"
+	"github.com/coderiser/go-cache/pkg/core"
 )
 
 func main() {

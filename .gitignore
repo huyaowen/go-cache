@@ -1,6 +1,4 @@
 # Go 模块文件
-go.mod
-go.sum
 
 # 构建输出
 bin/
@@ -9,6 +7,10 @@ bin/
 *.dll
 *.so
 *.dylib
+
+# 可执行文件
+go-cache-gen
+examples/web-demo/web-demo
 
 # 测试二进制
 *.test

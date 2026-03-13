@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"container/list"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,13 @@ type CacheItem struct {
 	ExpiresAt  time.Time
 	CreatedAt  time.Time
 	LastAccess time.Time
+}
+
+// cacheEntry 内部缓存条目，包含 LRU 链表元素
+type cacheEntry struct {
+	key   string
+	value interface{}
+	elem  *list.Element // LRU 链表中的元素指针
 }
 
 func (i *CacheItem) IsExpired() bool {
@@ -57,13 +65,12 @@ func atomicStoreInt64(addr *int64, val int64) { atomic.StoreInt64(addr, val) }
 // MemoryBackend 内存缓存后端
 type MemoryBackend struct {
 	mu          sync.RWMutex
-	data        map[string]*CacheItem
+	data        map[string]*cacheEntry  // key → cacheEntry (with list.Element)
+	lru         *list.List              // LRU 链表，front=MRU, back=LRU
 	config      *CacheConfig
 	stats       *StatsCounter
 	ttlMgr      *TTLManager
 	keyBuilder  *DefaultKeyBuilder
-	accessOrder []string
-	accessIndex map[string]int
 	stopCleanup chan struct{}
 	cleanupDone chan struct{}
 	closed      bool
@@ -75,13 +82,12 @@ func NewMemoryBackend(config *CacheConfig) (*MemoryBackend, error) {
 	}
 
 	b := &MemoryBackend{
-		data:        make(map[string]*CacheItem, config.MaxSize/10+1),
+		data:        make(map[string]*cacheEntry, config.MaxSize/10+1),
+		lru:         list.New(),
 		config:      config,
 		stats:       NewStatsCounter(config.MaxSize),
 		ttlMgr:      NewTTLManager(config.DefaultTTL, config.MaxTTL),
 		keyBuilder:  NewDefaultKeyBuilder(":", config.Name),
-		accessOrder: make([]string, 0, config.MaxSize),
-		accessIndex: make(map[string]int),
 		stopCleanup: make(chan struct{}),
 		cleanupDone: make(chan struct{}),
 	}
@@ -106,10 +112,10 @@ func (m *MemoryBackend) startCleanup() {
 func (m *MemoryBackend) cleanupExpired() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for key, item := range m.data {
-		if item.IsExpired() {
+	for key, entry := range m.data {
+		if entry.value.(*CacheItem).IsExpired() {
 			delete(m.data, key)
-			m.removeAccessOrder(key)
+			m.lru.Remove(entry.elem)
 			m.stats.DecSize()
 			m.stats.RecordEviction()
 		}
@@ -118,26 +124,28 @@ func (m *MemoryBackend) cleanupExpired() {
 
 func (m *MemoryBackend) Get(ctx context.Context, key string) (interface{}, bool, error) {
 	m.mu.RLock()
-	item, exists := m.data[key]
+	entry, exists := m.data[key]
 	m.mu.RUnlock()
 
 	if !exists {
 		m.stats.RecordMiss()
 		return nil, false, nil
 	}
-	if item.IsExpired() {
+	cacheItem := entry.value.(*CacheItem)
+	if cacheItem.IsExpired() {
 		go m.Delete(ctx, key)
 		m.stats.RecordMiss()
 		return nil, false, nil
 	}
 
 	m.mu.Lock()
-	item.LastAccess = time.Now()
-	m.updateAccessOrder(key)
+	cacheItem.LastAccess = time.Now()
+	// Move to front (MRU)
+	m.lru.MoveToFront(entry.elem)
 	m.mu.Unlock()
 
 	m.stats.RecordHit()
-	return item.Value, true, nil
+	return cacheItem.Value, true, nil
 }
 
 func (m *MemoryBackend) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
@@ -156,12 +164,18 @@ func (m *MemoryBackend) Set(ctx context.Context, key string, value interface{}, 
 		expiresAt = now.Add(normalizedTTL)
 	}
 
-	item := &CacheItem{Value: value, ExpiresAt: expiresAt, CreatedAt: now, LastAccess: now}
-	_, exists := m.data[key]
-	m.data[key] = item
-
-	if !exists {
-		m.addToAccessOrder(key)
+	cacheItem := &CacheItem{Value: value, ExpiresAt: expiresAt, CreatedAt: now, LastAccess: now}
+	entry := &cacheEntry{key: key, value: cacheItem}
+	
+	oldEntry, exists := m.data[key]
+	if exists {
+		// Update existing: move to front
+		m.lru.MoveToFront(oldEntry.elem)
+		oldEntry.value = cacheItem
+	} else {
+		// New entry: add to front of LRU list
+		entry.elem = m.lru.PushFront(entry)
+		m.data[key] = entry
 		m.stats.IncSize()
 	}
 	m.stats.RecordSet()
@@ -171,9 +185,9 @@ func (m *MemoryBackend) Set(ctx context.Context, key string, value interface{}, 
 func (m *MemoryBackend) Delete(ctx context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.data[key]; exists {
+	if entry, exists := m.data[key]; exists {
 		delete(m.data, key)
-		m.removeAccessOrder(key)
+		m.lru.Remove(entry.elem)
 		m.stats.DecSize()
 		m.stats.RecordDelete()
 	}
@@ -195,8 +209,7 @@ func (m *MemoryBackend) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.data = nil
-	m.accessOrder = nil
-	m.accessIndex = nil
+	m.lru = nil
 	return nil
 }
 
@@ -206,7 +219,7 @@ func (m *MemoryBackend) Stats() *CacheStats {
 }
 
 func (m *MemoryBackend) evictIfNeeded() {
-	if len(m.accessOrder) == 0 { return }
+	if m.lru.Len() == 0 { return }
 	switch m.config.EvictionPolicy {
 	case "lru", "":
 		m.evictLRU()
@@ -217,45 +230,17 @@ func (m *MemoryBackend) evictIfNeeded() {
 	}
 }
 
+// evictLRU 移除最近最少使用的条目 (O(1))
 func (m *MemoryBackend) evictLRU() {
-	if len(m.accessOrder) == 0 { return }
-	key := m.accessOrder[0]
-	m.accessOrder = m.accessOrder[1:]
-	delete(m.accessIndex, key)
-	if item, exists := m.data[key]; exists {
-		delete(m.data, key)
-		m.stats.RecordEviction()
-		_ = item
-	}
+	elem := m.lru.Back()
+	if elem == nil { return }
+	m.lru.Remove(elem)
+	entry := elem.Value.(*cacheEntry)
+	delete(m.data, entry.key)
+	m.stats.RecordEviction()
 }
 
 func (m *MemoryBackend) evictFIFO() { m.evictLRU() }
-
-func (m *MemoryBackend) addToAccessOrder(key string) {
-	m.accessOrder = append(m.accessOrder, key)
-	m.accessIndex[key] = len(m.accessOrder) - 1
-}
-
-func (m *MemoryBackend) updateAccessOrder(key string) {
-	idx, exists := m.accessIndex[key]
-	if !exists || idx == len(m.accessOrder)-1 { return }
-	m.accessOrder = append(m.accessOrder[:idx], m.accessOrder[idx+1:]...)
-	m.accessOrder = append(m.accessOrder, key)
-	m.accessIndex[key] = len(m.accessOrder) - 1
-	for i := idx; i < len(m.accessOrder)-1; i++ {
-		m.accessIndex[m.accessOrder[i]] = i
-	}
-}
-
-func (m *MemoryBackend) removeAccessOrder(key string) {
-	idx, exists := m.accessIndex[key]
-	if !exists { return }
-	delete(m.accessIndex, key)
-	m.accessOrder = append(m.accessOrder[:idx], m.accessOrder[idx+1:]...)
-	for i := idx; i < len(m.accessOrder); i++ {
-		m.accessIndex[m.accessOrder[i]] = i
-	}
-}
 
 var _ CacheBackend = (*MemoryBackend)(nil)
 

@@ -5,8 +5,8 @@
 ### 第一步：安装
 
 ```bash
-go get github.com/yourorg/go-cache
-go install github.com/yourorg/go-cache/annotation/generator/cmd/go-cache-gen@latest
+go get github.com/coderiser/go-cache
+go install github.com/coderiser/go-cache/cmd/generator@latest
 ```
 
 ### 第二步：定义服务
@@ -74,10 +74,10 @@ mkdir my-project && cd my-project
 go mod init my-project
 
 # 安装 go-cache
-go get github.com/yourorg/go-cache
+go get github.com/coderiser/go-cache
 
 # 安装代码生成器
-go install github.com/yourorg/go-cache/annotation/generator/cmd/go-cache-gen@latest
+go install github.com/coderiser/go-cache/cmd/generator@latest
 ```
 
 ### 2.2 配置文件
@@ -96,17 +96,42 @@ caches:
     
   products:
     backend: redis
-    redis_addr: localhost:6379
-    redis_db: 0
-    redis_prefix: "prod:"
+    addr: localhost:6379
+    password: ""
+    db: 0
+    prefix: "prod:"
     default_ttl: 1h
+    max_ttl: 24h
+    pool_size: 10
+    min_idle_conns: 5
+    dial_timeout: 5s
+    read_timeout: 3s
+    write_timeout: 3s
     
   sessions:
     backend: redis
-    redis_addr: localhost:6379
-    redis_db: 1
+    addr: localhost:6379
+    db: 1
+    prefix: "sessions:"
     default_ttl: 24h
+    pool_size: 20
 ```
+
+### Redis 配置参数说明
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `addr` | string | `localhost:6379` | Redis 服务器地址 |
+| `password` | string | `""` | Redis 密码（可选） |
+| `db` | int | `0` | Redis 数据库编号 |
+| `prefix` | string | `""` | Key 前缀，用于命名空间隔离 |
+| `default_ttl` | duration | `30m` | 默认过期时间 |
+| `max_ttl` | duration | `24h` | 最大允许 TTL |
+| `pool_size` | int | `10` | 连接池大小 |
+| `min_idle_conns` | int | `5` | 最小空闲连接数 |
+| `dial_timeout` | duration | `5s` | 连接超时 |
+| `read_timeout` | duration | `3s` | 读取超时 |
+| `write_timeout` | duration | `3s` | 写入超时 |
 
 ### 2.3 初始化缓存管理器
 
@@ -115,38 +140,56 @@ package main
 
 import (
     "log"
-    "os"
+    "time"
     
-    "github.com/yourorg/go-cache/core"
-    "github.com/yourorg/go-cache/config"
-    "github.com/yourorg/go-cache/backend/memory"
-    "github.com/yourorg/go-cache/backend/redis"
+    "github.com/coderiser/go-cache/pkg/backend"
+    "github.com/coderiser/go-cache/pkg/core"
 )
 
 func initCache() core.CacheManager {
-    // 加载配置
-    cfg, err := config.Load("cache.yaml")
-    if err != nil {
-        log.Fatalf("Failed to load cache config: %v", err)
-    }
-    
     // 创建管理器
     manager := core.NewCacheManager()
     
     // 注册内存后端
-    manager.RegisterBackend("memory", func(cfg map[string]interface{}) (core.CacheBackend, error) {
-        return memory.New(&memory.Config{
-            MaxSize:      getInt(cfg, "max_size", 10000),
-            DefaultTTL:   getDuration(cfg, "default_ttl", 30*time.Minute),
-            CleanupInterval: getDuration(cfg, "cleanup_interval", 1*time.Minute),
-        }), nil
-    })
+    manager.RegisterCache("users", backend.NewMemoryBackend(&backend.MemoryConfig{
+        MaxSize:    10000,
+        DefaultTTL: 30 * time.Minute,
+    }))
     
     // 注册 Redis 后端
-    manager.RegisterBackend("redis", func(cfg map[string]interface{}) (core.CacheBackend, error) {
-        return redis.New(&redis.Config{
-            Addr:     getString(cfg, "redis_addr", "localhost:6379"),
-            Password: getString(cfg, "redis_password", ""),
+    redisBackend, err := backend.NewRedisBackend(&backend.RedisConfig{
+        Addr:         "localhost:6379",
+        Password:     "",
+        DB:           0,
+        Prefix:       "prod:",
+        DefaultTTL:   1 * time.Hour,
+        MaxTTL:       24 * time.Hour,
+        PoolSize:     10,
+        MinIdleConns: 5,
+        DialTimeout:  5 * time.Second,
+        ReadTimeout:  3 * time.Second,
+        WriteTimeout: 3 * time.Second,
+    })
+    if err != nil {
+        log.Fatalf("Failed to create Redis backend: %v", err)
+    }
+    manager.RegisterCache("products", redisBackend)
+    
+    // 注册另一个 Redis 后端（不同数据库）
+    sessionsBackend, err := backend.NewRedisBackend(&backend.RedisConfig{
+        Addr:         "localhost:6379",
+        DB:           1,
+        Prefix:       "sessions:",
+        DefaultTTL:   24 * time.Hour,
+        PoolSize:     20,
+        MinIdleConns: 10,
+    })
+    if err != nil {
+        log.Fatalf("Failed to create sessions Redis backend: %v", err)
+    }
+    manager.RegisterCache("sessions", sessionsBackend)
+    
+    return manager
             DB:       getInt(cfg, "redis_db", 0),
             Prefix:   getString(cfg, "redis_prefix", ""),
             DefaultTTL: getDuration(cfg, "default_ttl", 1*time.Hour),
@@ -680,9 +723,476 @@ go test -trace=trace.out -bench=.
 go tool trace trace.out
 ```
 
-## 7. 下一步
+## 7. Redis 后端集成
+
+### 7.1 安装依赖
+
+```bash
+go get github.com/redis/go-redis/v9
+go get golang.org/x/sync
+```
+
+### 7.2 创建 Redis 后端
+
+```go
+package main
+
+import (
+    "log"
+    "time"
+    
+    "github.com/coderiser/go-cache/pkg/backend"
+    "github.com/coderiser/go-cache/pkg/core"
+)
+
+func initRedis() backend.CacheBackend {
+    config := &backend.RedisConfig{
+        Addr:         "localhost:6379",
+        Password:     "", // 如有密码请设置
+        DB:           0,
+        Prefix:       "myapp", // Key 前缀
+        DefaultTTL:   30 * time.Minute,
+        MaxTTL:       24 * time.Hour,
+        PoolSize:     10,
+        MinIdleConns: 5,
+        MaxRetries:   3,
+        DialTimeout:  5 * time.Second,
+        ReadTimeout:  3 * time.Second,
+        WriteTimeout: 3 * time.Second,
+    }
+    
+    redisBackend, err := backend.NewRedisBackend(config)
+    if err != nil {
+        log.Fatalf("Failed to create Redis backend: %v", err)
+    }
+    
+    return redisBackend
+}
+
+func main() {
+    manager := core.NewCacheManager()
+    manager.RegisterCache("users", initRedis())
+    
+    // 使用缓存...
+}
+```
+
+### 7.3 连接池配置建议
+
+| 场景 | PoolSize | MinIdleConns | 说明 |
+|------|----------|--------------|------|
+| 开发环境 | 5 | 2 | 节省资源 |
+| 生产环境（低并发） | 10 | 5 | 平衡性能和资源 |
+| 生产环境（高并发） | 50-100 | 20-30 | 根据并发量调整 |
+| 集群环境 | 100+ | 50+ | 配合 Redis Cluster 使用 |
+
+### 7.4 Docker Compose 示例
+
+```yaml
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    
+  app:
+    build: .
+    depends_on:
+      - redis
+    environment:
+      - REDIS_ADDR=redis:6379
+
+volumes:
+  redis-data:
+```
+
+## 8. 缓存异常保护机制
+
+### 8.1 三种缓存问题
+
+| 问题 | 描述 | 解决方案 |
+|------|------|----------|
+| **缓存穿透** | 查询不存在的数据，缓存无法命中 | 空值缓存（Nil Marker） |
+| **缓存击穿** | 热点 key 过期，并发请求直达数据库 | Singleflight 请求合并 |
+| **缓存雪崩** | 大量缓存同时过期 | TTL 随机偏移（Jitter） |
+
+### 8.2 启用保护机制
+
+```go
+package service
+
+import (
+    "context"
+    "time"
+    
+    "github.com/coderiser/go-cache/pkg/core"
+    "github.com/coderiser/go-cache/pkg/backend"
+)
+
+type UserService struct {
+    cache      backend.CacheBackend
+    protection *core.CacheProtection
+}
+
+func NewUserService(cache backend.CacheBackend) *UserService {
+    // 使用默认配置（三种保护全部启用）
+    protection := core.NewCacheProtection(core.DefaultProtectionConfig())
+    
+    return &UserService{
+        cache:      cache,
+        protection: protection,
+    }
+}
+```
+
+### 8.3 自定义保护配置
+
+```go
+config := &core.ProtectionConfig{
+    // 穿透保护
+    EnablePenetrationProtection: true,
+    EmptyValueTTL:               5 * time.Minute, // 空值缓存 5 分钟
+    
+    // 击穿保护
+    EnableBreakdownProtection:   true,
+    
+    // 雪崩保护
+    EnableAvalancheProtection:   true,
+    TTLJitterFactor:             0.1, // 10% 随机偏移
+}
+
+protection := core.NewCacheProtection(config)
+```
+
+### 8.4 使用受保护的缓存操作
+
+```go
+func (s *UserService) GetUser(ctx context.Context, id string) (*User, error) {
+    key := "user:" + id
+    
+    result, err := s.protection.ProtectedGet(
+        ctx,
+        key,
+        // 1. 缓存获取
+        func() (interface{}, bool, error) {
+            return s.cache.Get(ctx, key)
+        },
+        // 2. 缓存未命中时的数据获取（自动应用击穿保护）
+        func() (interface{}, error) {
+            return s.db.FindUser(id)
+        },
+        // 3. 缓存设置（自动应用穿透和雪崩保护）
+        func(value interface{}, ttl time.Duration) error {
+            return s.cache.Set(ctx, key, value, ttl)
+        },
+    )
+    
+    if err != nil {
+        return nil, err
+    }
+    
+    return result.(*User), nil
+}
+```
+
+### 8.5 直接使用 Singleflight
+
+```go
+// 合并并发请求
+result, err, shared := protection.ApplyBreakdownProtection(ctx, "hot-key", func() (interface{}, error) {
+    // 这个函数在并发下只执行一次
+    return db.GetHotData("hot-key")
+})
+
+if shared {
+    log.Println("Result shared from concurrent request")
+}
+```
+
+### 8.6 TTL 抖动示例
+
+```go
+baseTTL := 30 * time.Minute
+
+// 应用默认抖动（10%）
+actualTTL := protection.ApplyAvalancheProtection(baseTTL)
+// 结果：27-33 分钟之间
+
+// 自定义抖动因子（20%）
+actualTTL = protection.CalculateTTLWithJitter(baseTTL, 0.2)
+// 结果：24-36 分钟之间
+```
+
+### 8.7 生产环境最佳实践
+
+```go
+// 完整的生产环境配置示例
+func NewProductionCache() (*UserService, error) {
+    // 1. 创建 Redis 后端
+    redisConfig := &backend.RedisConfig{
+        Addr:         "redis-cluster:6379",
+        Password:     os.Getenv("REDIS_PASSWORD"),
+        PoolSize:     50,
+        MinIdleConns: 20,
+        MaxRetries:   3,
+        DialTimeout:  5 * time.Second,
+        ReadTimeout:  3 * time.Second,
+        WriteTimeout: 3 * time.Second,
+    }
+    
+    redisBackend, err := backend.NewRedisBackend(redisConfig)
+    if err != nil {
+        return nil, err
+    }
+    
+    // 2. 创建保护机制
+    protectionConfig := &core.ProtectionConfig{
+        EnablePenetrationProtection: true,
+        EmptyValueTTL:               5 * time.Minute,
+        EnableBreakdownProtection:   true,
+        EnableAvalancheProtection:   true,
+        TTLJitterFactor:             0.1,
+    }
+    protection := core.NewCacheProtection(protectionConfig)
+    
+    // 3. 创建服务
+    return &UserService{
+        cache:      redisBackend,
+        protection: protection,
+        db:         NewDatabase(),
+    }, nil
+}
+```
+
+## 9. P2 高级功能集成
+
+### 9.1 代码生成器集成
+
+**方式 1: 手动运行**
+```bash
+go-cache-gen ./...
+```
+
+**方式 2: go generate 集成**
+```go
+// 在包级别添加
+//go:generate go-cache-gen ./...
+
+package service
+```
+
+然后运行:
+```bash
+go generate ./...
+```
+
+**方式 3: Makefile 集成**
+```makefile
+.PHONY: generate
+generate:
+	go generate ./...
+	go-cache-gen ./...
+
+build: generate
+	go build -o app .
+```
+
+### 9.2 一行初始化（推荐）
+
+```go
+package service
+
+import (
+	"github.com/coderiser/go-cache/pkg/proxy"
+)
+
+type UserService struct {
+	db *gorm.DB
+}
+
+// @cacheable(cache="users", key="#id", ttl="30m")
+func (s *UserService) GetUser(id string) (*User, error) {
+	var u User
+	err := s.db.Where("id = ?", id).First(&u).Error
+	return &u, err
+}
+
+// 一行代码完成初始化！
+var UserService = proxy.SimpleDecorate(&UserService{})
+```
+
+### 9.3 多级缓存集成
+
+```go
+package main
+
+import (
+	"time"
+	"github.com/coderiser/go-cache/pkg/backend"
+	"github.com/coderiser/go-cache/pkg/core"
+	"github.com/coderiser/go-cache/pkg/proxy"
+)
+
+func init() {
+	// L1: Memory (快速)
+	memoryBackend := backend.NewMemoryBackend(&backend.MemoryConfig{
+		MaxSize:    1000,
+		DefaultTTL: 5 * time.Minute,
+	})
+	
+	// L2: Redis (持久)
+	redisBackend, _ := backend.NewRedisBackend(&backend.RedisConfig{
+		Addr:       "localhost:6379",
+		DefaultTTL: 30 * time.Minute,
+	})
+	
+	// 创建混合后端
+	hybridBackend := backend.NewHybridBackend(
+		"users",
+		memoryBackend,
+		redisBackend,
+		&backend.HybridConfig{
+			AsyncL2Write: true,
+		},
+	)
+	
+	// 注册到管理器
+	manager := core.NewCacheManager()
+	manager.RegisterCache("users", hybridBackend)
+	
+	// 装饰服务
+	UserService = proxy.SimpleDecorateWithManager(&UserService{}, manager).(*UserService)
+}
+```
+
+### 9.4 监控集成
+
+**Prometheus 指标**:
+```go
+package main
+
+import (
+	"net/http"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/coderiser/go-cache/pkg/core"
+)
+
+func main() {
+	manager := core.NewCacheManager()
+	manager.EnableMetrics()
+	
+	// 暴露 /metrics 端点
+	http.Handle("/metrics", promhttp.Handler())
+	go http.ListenAndServe(":8080", nil)
+}
+```
+
+**Grafana 仪表盘**:
+```json
+{
+  "dashboard": {
+    "title": "Go-Cache Metrics",
+    "panels": [
+      {
+        "title": "Cache Hit Rate",
+        "targets": [
+          {
+            "expr": "rate(go_cache_hits_total[5m]) / (rate(go_cache_hits_total[5m]) + rate(go_cache_misses_total[5m]))"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### 9.5 分布式追踪集成
+
+```go
+package main
+
+import (
+	"go.opentelemetry.io/otel"
+	"github.com/coderiser/go-cache/pkg/core"
+	"github.com/coderiser/go-cache/pkg/tracing"
+)
+
+func init() {
+	manager := core.NewCacheManager()
+	
+	// 启用 OpenTelemetry 追踪
+	tracer := otel.Tracer("go-cache")
+	wrapper := tracing.NewOpenTelemetryWrapper(tracer)
+	manager.SetTracingWrapper(wrapper)
+}
+```
+
+**Jaeger 查询示例**:
+```
+# 查找所有缓存未命中
+{service.name="my-app"} | cache.operation="get" | cache.hit=false
+
+# 查看慢查询
+{service.name="my-app"} | cache.duration > 10ms
+```
+
+### 9.6 完整生产配置
+
+```go
+func NewProductionService() (*UserService, error) {
+	// 1. 创建 Redis 后端
+	redisBackend, err := backend.NewRedisBackend(&backend.RedisConfig{
+		Addr:         os.Getenv("REDIS_ADDR"),
+		Password:     os.Getenv("REDIS_PASSWORD"),
+		PoolSize:     50,
+		MinIdleConns: 20,
+		MaxRetries:   3,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+	})
+	if err != nil {
+		return nil, err
+	}
+	
+	// 2. 创建管理器
+	manager := core.NewCacheManager()
+	manager.RegisterCache("users", redisBackend)
+	
+	// 3. 启用监控
+	manager.EnableMetrics()
+	manager.EnableTracing(otel.Tracer("go-cache"))
+	
+	// 4. 配置保护机制
+	protection := core.NewCacheProtection(&core.ProtectionConfig{
+		EnablePenetrationProtection: true,
+		EmptyValueTTL:               5 * time.Minute,
+		EnableBreakdownProtection:   true,
+		EnableAvalancheProtection:   true,
+		TTLJitterFactor:             0.1,
+	})
+	manager.SetProtection(protection)
+	
+	// 5. 装饰服务
+	decorated := proxy.SimpleDecorateWithManager(&UserService{}, manager)
+	return decorated.(*UserService), nil
+}
+```
+
+## 10. 下一步
 
 - 📖 阅读 [ARCHITECTURE.md](ARCHITECTURE.md) 了解架构设计
 - 📐 阅读 [INTERFACE_SPEC.md](INTERFACE_SPEC.md) 查看完整接口定义
-- 🔧 查看示例项目：`github.com/yourorg/go-cache/examples`
-- 💬 加入社区：`github.com/yourorg/go-cache/discussions`
+- 🚀 阅读 [P2_FEATURES.md](P2_FEATURES.md) 了解 P2 新增功能
+- 🔧 查看示例项目：`github.com/coderiser/go-cache/examples`
+- 💬 加入社区：`github.com/coderiser/go-cache/discussions`
+
+---
+
+**文档版本**: 2.0 (P2)  
+**最后更新**: 2026-03-13

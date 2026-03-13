@@ -460,10 +460,18 @@ func generateCachedServiceForInterface(interfaceName string, interfaceInfo *Inte
 	
 	// 从扫描目录推导 model 包路径
 	// scanDir 如：. 或 examples/gin-web
-	// 需要获取实际的目录名而不是 "."
+	// 需要智能识别示例目录（可能是当前目录或父目录）
 	absDir, _ := filepath.Abs(scanDir)
 	dirName := filepath.Base(absDir)
-	fmt.Printf("[DEBUG] scanDir=%s, absDir=%s, dirName=%s\n", scanDir, absDir, dirName)
+	
+	// 如果 dirName 是 "service"，说明在 service 目录下运行，需要取父目录
+	if dirName == "service" {
+		parentDir := filepath.Base(filepath.Dir(absDir))
+		if parentDir != "" && parentDir != "/" {
+			dirName = parentDir
+		}
+	}
+	
 	// 推导模块路径：从 go.mod 读取或根据目录结构推导
 	modelPath := fmt.Sprintf("github.com/coderiser/go-cache/examples/%s/model", dirName)
 	

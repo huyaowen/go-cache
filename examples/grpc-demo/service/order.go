@@ -24,13 +24,16 @@ type orderService struct {
 	nextID  int64
 }
 
-// NewOrderService 创建订单服务
-func NewOrderService() *orderService {
+// NewOrderServiceRaw 创建原始订单服务（不带缓存）
+func NewOrderServiceRaw() *orderService {
 	return &orderService{
 		orders: make(map[int64]*model.Order),
 		nextID: 1,
 	}
 }
+
+// NewOrderService 创建带缓存的订单服务（由生成器生成）
+// func NewOrderService() OrderServiceInterface
 
 // GetOrder 获取订单 - 带缓存
 // @cacheable(cache="orders", key="#id", ttl="30m")

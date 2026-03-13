@@ -212,14 +212,20 @@ func parseMethodType(field *ast.Field, funcType *ast.FuncType, fset *token.FileS
 	if funcType.Params != nil {
 		for _, param := range funcType.Params.List {
 			paramType := getTypeString(param.Type, fset)
-			paramName := "_"
+			// 处理多参数名情况（如 name, email string）
 			if len(param.Names) > 0 {
-				paramName = param.Names[0].Name
+				for _, name := range param.Names {
+					methodInfo.Params = append(methodInfo.Params, ParamInfo{
+						Name: name.Name,
+						Type: paramType,
+					})
+				}
+			} else {
+				methodInfo.Params = append(methodInfo.Params, ParamInfo{
+					Name: "_",
+					Type: paramType,
+				})
 			}
-			methodInfo.Params = append(methodInfo.Params, ParamInfo{
-				Name: paramName,
-				Type: paramType,
-			})
 		}
 	}
 	
@@ -800,6 +806,40 @@ func generateCacheEvictMethod(method *MethodInfo, ann *CacheAnnotation, cachedTy
 	argNames := buildArgNames(method.Params)
 	resultTypes := buildResultTypes(method.Results)
 	keyExpr := buildKeyExpression(method.Params, method.Results, ann.Key)
+	
+	// 检查是否只有 error 返回值
+	hasOnlyErrorReturn := method.HasError && method.ResultType == ""
+	
+	if hasOnlyErrorReturn {
+		code := fmt.Sprintf(`
+// %s 带缓存清除的实现（@cacheevict）
+func (c *%s) %s(%s) %s {
+	// 1. 执行原始方法
+	err := c.decorated.%s(%s)
+	if err != nil {
+		return err
+	}
+	
+	// 2. 清除缓存
+	cache, _ := c.manager.GetCache("%s")
+	if cache == nil {
+		return nil
+	}
+	
+	// 3. 生成缓存 Key
+	key := fmt.Sprintf("%s:%%v", %s)
+	
+	// 4. 删除缓存
+	_ = cache.Delete(context.Background(), key)
+	
+	return nil
+}
+`, method.Name, cachedTypeName, method.Name, params, resultTypes,
+			method.Name, argNames,
+			ann.CacheName,
+			ann.CacheName, keyExpr)
+		return code
+	}
 	
 	code := fmt.Sprintf(`
 // %s 带缓存清除的实现（@cacheevict）

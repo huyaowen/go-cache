@@ -10,7 +10,7 @@ import (
 
 func main() {
 	// 初始化服务 (零配置，使用全局缓存管理器)
-	userService := service.InitService()
+	userService := service.NewUserService()
 
 	// 创建处理器
 	userHandler := handler.NewUserHandler(userService)

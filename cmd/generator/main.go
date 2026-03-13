@@ -346,7 +346,7 @@ func generateCode(annotations map[string]map[string]*CacheAnnotation, interfaces
 // generateAnnotationRegistration 生成注解注册代码
 func generateAnnotationRegistration(annotations map[string]map[string]*CacheAnnotation) {
 	// 创建输出目录
-	outputDir := ".cache-gen"
+	outputDir := "."
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		fmt.Printf("❌ Error creating output directory: %v\n", err)
 		os.Exit(1)
@@ -501,8 +501,8 @@ func generateCachedServiceForInterface(interfaceName string, interfaceInfo *Inte
 	
 	timestamp := time.Now().Format(time.RFC3339)
 	
-	// 输出到 service/.cache-gen 目录
-	outputDir := ".cache-gen"
+	// 输出到当前目录
+	outputDir := "."
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		fmt.Printf("❌ Error creating output directory: %v\n", err)
 		return

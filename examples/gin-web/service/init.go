@@ -5,7 +5,7 @@ import (
 	"github.com/coderiser/go-cache/examples/gin-web/service/cached"
 )
 
-// InitService 初始化服务
-func InitService(manager core.CacheManager) UserServiceInterface {
+// InitService 初始化服务（使用全局缓存管理器）
+func InitService() UserServiceInterface {
 	return cached.NewUserService()
 }

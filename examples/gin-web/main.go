@@ -4,18 +4,13 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
-	"github.com/coderiser/go-cache/pkg/core"
 	"github.com/coderiser/go-cache/examples/gin-web/handler"
 	"github.com/coderiser/go-cache/examples/gin-web/service"
 )
 
 func main() {
-	// 创建缓存管理器
-	manager := core.NewCacheManager()
-	defer manager.Close()
-
-	// 初始化服务 (零配置)
-	userService := service.InitService(manager)
+	// 初始化服务 (零配置，使用全局缓存管理器)
+	userService := service.InitService()
 
 	// 创建处理器
 	userHandler := handler.NewUserHandler(userService)

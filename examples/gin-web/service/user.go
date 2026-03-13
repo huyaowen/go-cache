@@ -21,18 +21,16 @@ type UserServiceInterface interface {
 
 // userService 用户服务实现
 type userService struct {
-	mu      sync.RWMutex
-	users   map[int64]*model.User
-	nextID  int64
-	manager core.CacheManager
+	mu     sync.RWMutex
+	users  map[int64]*model.User
+	nextID int64
 }
 
 // NewUserService 创建用户服务
-func NewUserService(manager core.CacheManager) *userService {
+func NewUserService() *userService {
 	return &userService{
-		users:   make(map[int64]*model.User),
-		nextID:  1,
-		manager: manager,
+		users:  make(map[int64]*model.User),
+		nextID: 1,
 	}
 }
 

@@ -458,15 +458,19 @@ func generateCachedServiceForInterface(interfaceName string, interfaceInfo *Inte
 	importsMap["github.com/coderiser/go-cache/pkg/cache"] = "gocache"
 	
 	// 检查是否需要 model 包导入
+	currentDir, _ := os.Getwd()
+	dirName := filepath.Base(currentDir)
+	modelPath := fmt.Sprintf("github.com/coderiser/go-cache/examples/%s/model", dirName)
+	
 	for _, method := range interfaceInfo.Methods {
 		for _, param := range method.Params {
 			if strings.Contains(param.Type, "model.") {
-				importsMap["github.com/coderiser/go-cache/examples/cron-job/model"] = ""
+				importsMap[modelPath] = ""
 			}
 		}
 		for _, result := range method.Results {
 			if strings.Contains(result.Type, "model.") {
-				importsMap["github.com/coderiser/go-cache/examples/cron-job/model"] = ""
+				importsMap[modelPath] = ""
 			}
 		}
 	}

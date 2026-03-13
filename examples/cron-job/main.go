@@ -15,6 +15,11 @@ import (
 	cached "github.com/coderiser/go-cache/examples/cron-job/service/.cache-gen"
 )
 
+// 示例：零配置使用缓存服务
+// 1. 添加注解到 service 方法
+// 2. 执行 go generate ./...
+// 3. 使用 cached.NewProductService() 直接使用
+
 var (
 	// productService 全局商品服务实例（使用接口类型）
 	// 方案 G: 零配置，直接使用

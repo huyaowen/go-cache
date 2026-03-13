@@ -12,11 +12,12 @@ import (
 	"github.com/coderiser/go-cache/pkg/core"
 	"github.com/coderiser/go-cache/examples/cron-job/job"
 	"github.com/coderiser/go-cache/examples/cron-job/service"
+	cached "github.com/coderiser/go-cache/examples/cron-job/service/.cache-gen"
 )
 
 var (
 	// productService 全局商品服务实例（使用接口类型）
-	// 方案 A: 代码生成器生成类型安全的包装器
+	// 方案 G: 零配置，直接使用
 	productService service.ProductServiceInterface
 )
 
@@ -37,10 +38,9 @@ func main() {
 		manager.Close()
 	}()
 
-	// 2. 创建并装饰商品服务（使用代码生成的包装器）
-	// 方案 A: 代码生成器生成类型安全的包装器
-	// 业务代码零侵入，handler 直接使用接口调用
-	productService = service.DecorateWithCache(manager)
+	// 2. 创建商品服务（方案 G: 零配置）
+	// 使用代码生成的 NewProductService()，自动使用全局 Manager
+	productService = cached.NewProductService()
 
 	// 3. 创建缓存预热任务
 	warmupJob := job.NewCacheWarmupJob(manager, productService)

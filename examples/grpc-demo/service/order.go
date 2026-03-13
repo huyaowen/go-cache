@@ -13,18 +13,19 @@ import (
 // OrderServiceInterface 订单服务接口
 type OrderServiceInterface interface {
 	GetOrder(id int64) (*model.Order, error)
-	CreateOrder(userID int64, total float64) (*model.Order, error)
+	CreateOrder(userID, productID int64, quantity int) (*model.Order, error)
+	UpdateOrderStatus(id int64, status string) (*model.Order, error)
 }
 
 // orderService 订单服务实现
 type orderService struct {
-	mu     sync.RWMutex
-	orders map[int64]*model.Order
-	nextID int64
+	mu      sync.RWMutex
+	orders  map[int64]*model.Order
+	nextID  int64
 }
 
-// NewOrderServiceRaw 创建原始订单服务
-func NewOrderServiceRaw() *orderService {
+// NewOrderService 创建订单服务
+func NewOrderService() *orderService {
 	return &orderService{
 		orders: make(map[int64]*model.Order),
 		nextID: 1,
@@ -41,25 +42,45 @@ func (s *orderService) GetOrder(id int64) (*model.Order, error) {
 	if !exists {
 		return nil, fmt.Errorf("order %d not found", id)
 	}
+
 	return order, nil
 }
 
 // CreateOrder 创建订单 - 带缓存更新
 // @cacheput(cache="orders", key="#result.ID", ttl="30m")
-func (s *orderService) CreateOrder(userID int64, total float64) (*model.Order, error) {
+func (s *orderService) CreateOrder(userID, productID int64, quantity int) (*model.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	order := &model.Order{
-		ID:        s.nextID,
-		UserID:    userID,
-		Total:     total,
-		Status:    "pending",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:         s.nextID,
+		UserID:     userID,
+		ProductID:  productID,
+		Quantity:   quantity,
+		TotalPrice: float64(quantity) * 99.99,
+		Status:     "pending",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}
 	s.nextID++
 	s.orders[order.ID] = order
+
+	return order, nil
+}
+
+// UpdateOrderStatus 更新订单状态 - 带缓存更新
+// @cacheput(cache="orders", key="#id", ttl="30m")
+func (s *orderService) UpdateOrderStatus(id int64, status string) (*model.Order, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	order, exists := s.orders[id]
+	if !exists {
+		return nil, fmt.Errorf("order %d not found", id)
+	}
+
+	order.Status = status
+	order.UpdatedAt = time.Now()
 
 	return order, nil
 }

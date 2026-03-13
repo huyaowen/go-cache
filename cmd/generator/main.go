@@ -896,19 +896,18 @@ func buildResultTypes(results []ParamInfo) string {
 
 // buildKeyExpression 根据 SpEL 表达式构建 Key 生成代码
 // 支持：#paramName, #result.fieldName, 字符串拼接
-// 返回完整的 key 生成表达式，如：fmt.Sprintf("users:%v", id)
+// 返回 key 的值部分（不包含 cache name 前缀），如：id 或 result.ID
 func buildKeyExpression(params []ParamInfo, results []ParamInfo, keyExpr string) string {
 	// 处理 #result.XXX 表达式
 	if strings.HasPrefix(keyExpr, "#result.") {
 		fieldName := strings.TrimPrefix(keyExpr, "#result.")
-		return fmt.Sprintf(`fmt.Sprintf("%%v", result.%s)`, fieldName)
+		return fmt.Sprintf(`result.%s`, fieldName)
 	}
 	
 	// 处理简单参数 #paramName
-	if strings.HasPrefix(keyExpr, "#") {
+	if strings.HasPrefix(keyExpr, "#") && !strings.Contains(keyExpr, "+") {
 		paramName := strings.TrimPrefix(keyExpr, "#")
-		// 直接使用参数名（不查找，因为 SpEL 表达式可能使用字段名）
-		return fmt.Sprintf(`fmt.Sprintf("%%v", %s)`, paramName)
+		return paramName
 	}
 	
 	// 处理复杂表达式：#user.Id + ':' + #status
@@ -918,58 +917,38 @@ func buildKeyExpression(params []ParamInfo, results []ParamInfo, keyExpr string)
 	
 	// 默认：使用第一个参数
 	if len(params) == 0 {
-		return `fmt.Sprintf("%v", "default")`
+		return `"default"`
 	}
 	firstParam := params[0].Name
 	if firstParam == "_" || firstParam == "" {
-		firstParam = "arg0"
+		return "arg0"
 	}
-	return fmt.Sprintf(`fmt.Sprintf("%%v", %s)`, firstParam)
+	return firstParam
 }
 
 // buildComplexKeyExpression 构建复杂 Key 表达式
+// 返回拼接后的表达式，如：user.Id + ":" + status
 func buildComplexKeyExpression(params []ParamInfo, expr string) string {
 	// 简单实现：分割 + 号，处理每个部分
 	parts := strings.Split(expr, "+")
-	var formatParts []string
 	var valueParts []string
 	
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "#") {
-			// 参数引用
-			paramName := strings.TrimPrefix(part, "#")
-			// 处理嵌套字段：user.Id -> user.Id
-			if strings.Contains(paramName, ".") {
-				// 直接使用（假设是有效的 Go 表达式）
-				formatParts = append(formatParts, "%v")
-				valueParts = append(valueParts, paramName)
-			} else {
-				// 简单参数
-				formatParts = append(formatParts, "%v")
-				// 查找参数名
-				found := false
-				for _, param := range params {
-					if param.Name == paramName {
-						valueParts = append(valueParts, paramName)
-						found = true
-						break
-					}
-				}
-				if !found {
-					valueParts = append(valueParts, paramName)
-				}
-			}
-		} else if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
-			// 字符串字面量
+		// 去掉所有的 # 符号（SpEL 参数前缀）
+		part = strings.ReplaceAll(part, "#", "")
+		
+		if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
+			// 字符串字面量：去掉单引号，加上双引号
 			str := strings.Trim(part, "'")
-			formatParts = append(formatParts, str)
+			valueParts = append(valueParts, fmt.Sprintf(`"%s"`, str))
+		} else {
+			// 参数引用或字段访问
+			valueParts = append(valueParts, part)
 		}
 	}
 	
-	formatStr := strings.Join(formatParts, "")
-	valuesStr := strings.Join(valueParts, ", ")
-	return fmt.Sprintf("fmt.Sprintf(\"%s\", %s)", formatStr, valuesStr)
+	return strings.Join(valueParts, " + ")
 }
 
 func countAnnotations(annotations map[string]map[string]*CacheAnnotation) int {

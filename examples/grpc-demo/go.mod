@@ -2,7 +2,7 @@ module github.com/coderiser/go-cache/examples/grpc-demo
 
 go 1.25.0
 
-require github.com/coderiser/go-cache v1.0.0
+require github.com/coderiser/go-cache v0.0.0
 
 require (
 	github.com/antonmedv/expr v1.15.0 // indirect
@@ -15,4 +15,4 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 )
 
-replace github.com/coderiser/go-cache => ../..
+replace github.com/coderiser/go-cache => ../../

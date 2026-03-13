@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coderiser/go-cache/pkg/core"
 	"github.com/coderiser/go-cache/examples/gin-web/model"
 )
 
@@ -26,8 +25,8 @@ type userService struct {
 	nextID int64
 }
 
-// NewUserService 创建用户服务
-func NewUserService() *userService {
+// NewUserServiceRaw 创建原始用户服务（不带缓存）
+func NewUserServiceRaw() *userService {
 	return &userService{
 		users:  make(map[int64]*model.User),
 		nextID: 1,

@@ -1,8 +1,8 @@
-# Go-Cache 方案 G 快速开始
+# Go-Cache 快速开始
 
-**版本:** v1.0  
+**版本:** v2.0 (运行时扫描)  
 **更新日期:** 2026-03-14  
-**特性:** 零配置，注解后直接使用
+**特性:** 真正零配置，无需代码生成
 
 ---
 
@@ -12,182 +12,86 @@
 
 ```go
 // service/product.go
-//go:generate go run ../../../cmd/generator/main.go .
-
-type ProductServiceInterface interface {
-    GetProduct(id int64) (*model.Product, error)
-}
-
-type productService struct {
-    manager core.CacheManager
-}
-
-func NewProductService(manager core.CacheManager) *productService {
-    return &productService{manager: manager}
+type ProductService struct {
+    // 业务逻辑
 }
 
 // @cacheable(cache="products", key="#id", ttl="1h")
-func (s *productService) GetProduct(id int64) (*model.Product, error) {
+func (s *ProductService) GetProduct(id int64) (*model.Product, error) {
     // 业务逻辑 - 从数据库查询
     return s.getProductFromDB(id)
 }
 
 // @cacheput(cache="products", key="#id", ttl="1h")
-func (s *productService) UpdatePrice(id int64, price float64) (*model.Product, error) {
+func (s *ProductService) UpdatePrice(id int64, price float64) (*model.Product, error) {
     // 更新价格
 }
 ```
 
-### 步骤 2: 执行代码生成
+### 步骤 2: 初始化服务
 
-```bash
-go generate ./...
+```go
+// service/init.go
+import (
+    "github.com/coderiser/go-cache/pkg/proxy"
+    _ "github.com/coderiser/go-cache/pkg/cache"  // 导入触发自动扫描
+)
+
+// 零配置！自动应用缓存
+var ProductService = proxy.SimpleDecorate(&ProductService{})
 ```
 
-生成文件:
-- `service/auto_register.go` - 注解自动注册（init() 中执行）
-- `service/product_cached.go` - 带缓存的实现
-
-### 步骤 3: 使用服务 (零配置!)
+### 步骤 3: 直接使用
 
 ```go
 // main.go
 import (
-    "your-module/service"  // ✅ 直接导入 service 包
+    "your-module/service"
 )
 
 func main() {
-    // ✅ 一行搞定！缓存自动生效
-    svc := service.NewProductService()
-    
-    product, err := svc.GetProduct(1)
+    // ✅ 真正零配置！无需代码生成
+    product, err := service.ProductService.GetProduct(1)
     
     // 第一次调用：查询数据库 + 写入缓存
     // 第二次调用：直接返回缓存
 }
 ```
 
----
-
-## ⚙️ 初始化配置
-
-### 默认配置（内存后端）
-
-框架默认使用内存缓存，无需额外配置：
-
-```go
-func main() {
-    svc := service.NewUserService()
-    user, _ := svc.GetUser(1)
-}
-```
-
-### 自定义配置（Redis 后端）
-
-```go
-import (
-    "github.com/coderiser/go-cache/pkg/cache"
-    "github.com/coderiser/go-cache/pkg/core"
-)
-
-func main() {
-    // 创建 Redis 缓存管理器
-    manager := core.NewCacheManager()
-    redisBackend := cache.NewRedisBackend("redis://localhost:6379")
-    manager.AddCache("users", redisBackend)
-    
-    // 设置为全局管理器（可选，init() 会自动调用）
-    cache.SetGlobalManager(manager)
-    
-    // 使用服务
-    svc := service.NewUserService()
-    user, _ := svc.GetUser(1)
-}
-```
-
-### 优雅关闭
-
-```go
-func main() {
-    defer cache.CloseGlobalManager()
-    
-    svc := service.NewUserService()
-    // 业务逻辑...
-}
-```
+**就这么简单！无需运行 `go generate`！**
 
 ---
 
-## 📝 注解语法
+## 🎯 核心注解
 
-### @cacheable (缓存读取)
-
-```go
-// @cacheable(cache="缓存名", key="Key 表达式", ttl="过期时间")
-@cacheable(cache="users", key="#id", ttl="30m")
-func GetUser(id int64) (*User, error)
-
-// 支持 SpEL 表达式
-@cacheable(cache="users", key="#user.Id", ttl="1h")
-func GetUser(user *UserRequest) (*User, error)
-
-// 条件缓存
-@cacheable(cache="users", key="#id", condition="#id > 0")
-func GetUser(id int64) (*User, error)
-
-// 排除条件
-@cacheable(cache="users", key="#id", unless="#result == nil")
-func GetUser(id int64) (*User, error)
-```
-
-### @cacheput (缓存更新)
-
-```go
-// @cacheput(cache="缓存名", key="Key 表达式", ttl="过期时间")
-@cacheput(cache="users", key="#id", ttl="30m")
-func UpdateUser(id int64, name string) (*User, error)
-```
-
-### @cacheevict (缓存清除)
-
-```go
-// 方法执行后清除
-@cacheevict(cache="users", key="#id")
-func DeleteUser(id int64) error
-
-// 方法执行前清除
-@cacheevict(cache="users", key="#id", before=true)
-func DeleteUser(id int64) error
-```
-
----
-
-## 🎯 SpEL 表达式语法
-
-### 支持的变量
-
-| 变量 | 说明 | 示例 |
+| 注解 | 说明 | 示例 |
 |------|------|------|
-| `#id`, `#user` | 参数名 | `key="#id"` |
-| `#p0`, `#p1` | 参数索引 | `key="#p0"` |
-| `#0`, `#1` | 参数索引 (简写) | `key="#0"` |
-| `result` | 返回值 (仅 unless) | `unless="#result == nil"` |
+| `@cacheable` | 缓存读取 | `@cacheable(cache="users", key="#id", ttl="30m")` |
+| `@cacheput` | 缓存更新 | `@cacheput(cache="users", key="#id", ttl="30m")` |
+| `@cacheevict` | 缓存清除 | `@cacheevict(cache="users", key="#id")` |
 
-### 表达式示例
+---
+
+## 🎨 SpEL 表达式
 
 ```go
-// 访问参数属性
-@cacheable(cache="users", key="#user.Id")
+// 参数引用
+@cacheable(cache="users", key="#id")
 
-// 访问嵌套属性
+// 嵌套属性
 @cacheable(cache="orders", key="#order.Customer.Id")
 
-// 静态方法调用
-@cacheable(cache="data", key="T(md5).Sum(#id)")
+// 返回值字段
+@cacheput(cache="users", key="#result.ID")
 
-// 条件表达式
-@cacheable(cache="data", key="#id", condition="#id > 0 && #id < 1000")
+// 条件缓存
+@cacheable(cache="data", key="#id", condition="#id > 0")
+
+// 排除条件
+@cacheable(cache="data", key="#id", unless="#result == nil")
 ```
+
+**支持变量:** `#id`, `#user` (参数名) | `#p0`, `#0` (参数索引) | `result` (返回值)
 
 ---
 
@@ -198,22 +102,21 @@ func DeleteUser(id int64) error
 ```go
 // main.go
 import (
-    "github.com/coderiser/go-cache/pkg/core"
     "github.com/coderiser/go-cache/pkg/cache"
-    "your-module/service"
+    "github.com/coderiser/go-cache/pkg/core"
+    "github.com/coderiser/go-cache/pkg/proxy"
 )
 
 func main() {
     // 创建自定义 Manager (Redis 后端)
     manager := core.NewCacheManager()
-    redisBackend := cache.NewRedisBackend("redis://localhost:6379")
-    manager.AddCache("users", redisBackend)
+    // 配置 Redis...
     
-    // 设置为全局 Manager
-    cache.SetGlobalManager(manager)
-    
-    // 使用自定义 Manager 创建服务
-    svc := service.NewProductService()
+    // 使用自定义 Manager 装饰服务
+    var ProductService = proxy.SimpleDecorateWithManager(
+        &ProductService{}, 
+        manager,
+    )
 }
 ```
 
@@ -223,23 +126,7 @@ func main() {
 func main() {
     defer cache.CloseGlobalManager()
     
-    svc := cached.NewProductService()
-    // 业务逻辑...
-}
-```
-
----
-
-## 📊 缓存统计
-
-```go
-func printStats(manager core.CacheManager) {
-    cache, _ := manager.GetCache("products")
-    stats := cache.Stats()
-    
-    fmt.Printf("Hits: %d\n", stats.Hits)
-    fmt.Printf("Misses: %d\n", stats.Misses)
-    fmt.Printf("Hit Rate: %.1f%%\n", stats.HitRate * 100)
+    // 应用逻辑...
 }
 ```
 
@@ -247,11 +134,9 @@ func printStats(manager core.CacheManager) {
 
 ## 🔍 常见问题
 
-### Q: 生成的代码在哪里？
+### Q: 需要运行代码生成器吗？
 
-A: 生成的文件在当前目录下：
-- `auto_register.go` - 注解自动注册
-- `<package>_cached.go` - 带缓存的实现（如 `product_cached.go`）
+A: **不需要！** cache 包会在 init() 中自动扫描源代码中的注解。
 
 ### Q: 如何修改缓存配置？
 
@@ -260,21 +145,22 @@ A: 修改注解参数即可：
 // @cacheable(cache="products", key="#id", ttl="2h")  // 改为 2 小时
 ```
 
-### Q: 如何禁用缓存？
-
-A: 删除注解或注释掉 `go generate`。
-
 ### Q: 支持哪些后端？
 
-A: 支持内存、Redis、混合后端。通过 `SetGlobalManager()` 配置。
+A: 支持内存、Redis、混合后端。通过 `proxy.SimpleDecorateWithManager()` 配置。
+
+### Q: 自动扫描会影响性能吗？
+
+A: 扫描只在程序启动时执行一次，运行时零开销。
 
 ---
 
 ## 📚 更多资源
 
-- [实施方案](./docs/cache-implementation-plan.md)
-- [设计文档](./docs/cache-integration-beego-proposal.md)
-- [示例代码](./examples/cron-job/)
+- [用户指南](docs/user-guide.md) - 完整文档
+- [API 参考](docs/api-reference.md) - pkg/cache 包文档
+- [注解流程](ANNOTATION_FLOW.md) - 注解注册与使用流程
+- [示例代码](examples/) - 完整示例
 
 ---
 

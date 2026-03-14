@@ -11,12 +11,12 @@
 ## 🚀 特性
 
 - ✨ **注解式缓存** - 一行注解，缓存自动生效
-- 🚀 **零配置启动** - `cached.NewXxxService()` 直接使用
+- 🚀 **真正零配置** - 无需代码生成，导入即用
 - 🎯 **SpEL 表达式** - 动态缓存 Key，灵活强大
 - 💾 **多后端支持** - Memory / Redis / Hybrid 无缝切换
 - 📊 **内置监控** - Prometheus 指标 + OpenTelemetry 追踪
 - 🛡️ **异常保护** - 穿透/击穿/雪崩全保护
-- 📝 **代码生成** - `go generate` 自动生成类型安全代码
+- 🔍 **自动扫描** - 运行时自动解析注解，无需 `go generate`
 
 ---
 
@@ -32,43 +32,49 @@ go get github.com/coderiser/go-cache@latest
 
 ```go
 // service/product.go
-//go:generate go run ../../../cmd/generator/main.go .
+type ProductService struct {
+    // ...
+}
 
 // @cacheable(cache="products", key="#id", ttl="1h")
-func GetProduct(id int64) (*model.Product, error) {
+func (s *ProductService) GetProduct(id int64) (*model.Product, error) {
     // 业务逻辑 - 从数据库查询
 }
 
 // @cacheput(cache="products", key="#id", ttl="1h")
-func UpdatePrice(id int64, price float64) (*model.Product, error) {
+func (s *ProductService) UpdatePrice(id int64, price float64) (*model.Product, error) {
     // 更新价格
 }
 ```
 
-### 2️⃣ 生成代码
+### 2️⃣ 初始化服务
 
-```bash
-go generate ./...
+```go
+// service/init.go
+import (
+    "github.com/coderiser/go-cache/pkg/proxy"
+    _ "github.com/coderiser/go-cache/pkg/cache"  // 导入触发自动扫描
+)
+
+var ProductService = proxy.SimpleDecorate(&ProductService{})
 ```
-
-生成文件:
-- `service/auto_register.go` - 注解自动注册（init() 中执行）
-- `service/product_cached.go` - 带缓存的实现
 
 ### 3️⃣ 直接使用
 
 ```go
 // main.go
 import (
-    "your-module/service"  // ✅ 直接导入 service 包
+    "your-module/service"
 )
 
 func main() {
-    // ✅ 零配置！缓存自动生效
-    svc := service.NewProductService()
-    product, _ := svc.GetProduct(1)
+    // ✅ 真正零配置！无需代码生成
+    // cache 包的 init() 会自动扫描所有注解
+    product, _ := service.ProductService.GetProduct(1)
 }
 ```
+
+**就这么简单！无需运行 `go generate`！**
 
 ---
 
@@ -127,6 +133,7 @@ make help
 | [快速开始](QUICKSTART.md) | 5 分钟上手指南 |
 | [用户指南](docs/user-guide.md) | 完整使用文档 |
 | [API 参考](docs/api-reference.md) | pkg/cache 包文档 |
+| [注解流程](ANNOTATION_FLOW.md) | 注解注册与使用流程 |
 | [迁移指南](docs/migration-guide.md) | 从旧版本迁移 |
 | [开发指南](CONTRIBUTING.md) | 贡献者指南 |
 

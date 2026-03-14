@@ -6,10 +6,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/coderiser/go-cache/examples/gin-web/handler"
 	"github.com/coderiser/go-cache/examples/gin-web/service"
+	_ "github.com/coderiser/go-cache/pkg/cache" // 导入 cache 包，触发自动注解扫描
 )
 
 func main() {
-	// 初始化服务 (零配置，使用全局缓存管理器)
+	// 🎉 零配置！无需运行代码生成器
+	// cache 包的 init() 会自动扫描 service 包中的注解
+	// 并注册到代理系统
+	
+	// 初始化服务（自动应用缓存）
 	userService := service.NewUserService()
 
 	// 创建处理器

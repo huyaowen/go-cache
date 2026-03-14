@@ -44,3 +44,8 @@ temp/
 TEST_REPORT.md
 VERIFICATION_REPORT.md
 *.test.md
+
+# ===== 编译产物（不提交）=====
+examples/gin-web/gin-web
+examples/gin-web/gin-web-test
+examples/grpc-demo/grpc-demo

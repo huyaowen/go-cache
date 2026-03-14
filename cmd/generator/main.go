@@ -98,6 +98,10 @@ func main() {
 
 	generateCode(allAnnotations, allInterfaces, scanDir)
 	fmt.Println("✅ Code generation complete!")
+	fmt.Println("\n📖 Next steps:")
+	fmt.Println("   1. Import your service: import \"your-module/service\"")
+	fmt.Println("   2. Use directly: svc := service.NewUserService()")
+	fmt.Println("   3. (Optional) Configure cache manager: see README.md")
 }
 
 func parseFile(path string, annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo) {

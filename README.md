@@ -51,15 +51,21 @@ func UpdatePrice(id int64, price float64) (*model.Product, error) {
 go generate ./...
 ```
 
+生成文件:
+- `service/auto_register.go` - 注解自动注册（init() 中执行）
+- `service/product_cached.go` - 带缓存的实现
+
 ### 3️⃣ 直接使用
 
 ```go
 // main.go
-import cached "your-module/service/.cache-gen"
+import (
+    "your-module/service"  // ✅ 直接导入 service 包
+)
 
 func main() {
     // ✅ 零配置！缓存自动生效
-    svc := cached.NewProductService()
+    svc := service.NewProductService()
     product, _ := svc.GetProduct(1)
 }
 ```

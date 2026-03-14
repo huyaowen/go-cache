@@ -45,23 +45,74 @@ go generate ./...
 ```
 
 生成文件:
-- `.cache-gen/auto_register.go` - 注解自动注册
-- `.cache-gen/product_cached.go` - 带缓存的实现
+- `service/auto_register.go` - 注解自动注册（init() 中执行）
+- `service/product_cached.go` - 带缓存的实现
 
 ### 步骤 3: 使用服务 (零配置!)
 
 ```go
 // main.go
-import cached "your-module/service/.cache-gen"
+import (
+    "your-module/service"  // ✅ 直接导入 service 包
+)
 
 func main() {
     // ✅ 一行搞定！缓存自动生效
-    svc := cached.NewProductService()
+    svc := service.NewProductService()
     
     product, err := svc.GetProduct(1)
     
     // 第一次调用：查询数据库 + 写入缓存
     // 第二次调用：直接返回缓存
+}
+```
+
+---
+
+## ⚙️ 初始化配置
+
+### 默认配置（内存后端）
+
+框架默认使用内存缓存，无需额外配置：
+
+```go
+func main() {
+    svc := service.NewUserService()
+    user, _ := svc.GetUser(1)
+}
+```
+
+### 自定义配置（Redis 后端）
+
+```go
+import (
+    "github.com/coderiser/go-cache/pkg/cache"
+    "github.com/coderiser/go-cache/pkg/core"
+)
+
+func main() {
+    // 创建 Redis 缓存管理器
+    manager := core.NewCacheManager()
+    redisBackend := cache.NewRedisBackend("redis://localhost:6379")
+    manager.AddCache("users", redisBackend)
+    
+    // 设置为全局管理器（可选，init() 会自动调用）
+    cache.SetGlobalManager(manager)
+    
+    // 使用服务
+    svc := service.NewUserService()
+    user, _ := svc.GetUser(1)
+}
+```
+
+### 优雅关闭
+
+```go
+func main() {
+    defer cache.CloseGlobalManager()
+    
+    svc := service.NewUserService()
+    // 业务逻辑...
 }
 ```
 
@@ -148,19 +199,21 @@ func DeleteUser(id int64) error
 // main.go
 import (
     "github.com/coderiser/go-cache/pkg/core"
-    cached "your-module/service/.cache-gen"
+    "github.com/coderiser/go-cache/pkg/cache"
+    "your-module/service"
 )
 
 func main() {
     // 创建自定义 Manager (Redis 后端)
     manager := core.NewCacheManager()
-    // 配置 Redis...
+    redisBackend := cache.NewRedisBackend("redis://localhost:6379")
+    manager.AddCache("users", redisBackend)
     
     // 设置为全局 Manager
     cache.SetGlobalManager(manager)
     
     // 使用自定义 Manager 创建服务
-    svc := cached.NewProductService()
+    svc := service.NewProductService()
 }
 ```
 
@@ -196,7 +249,9 @@ func printStats(manager core.CacheManager) {
 
 ### Q: 生成的代码在哪里？
 
-A: 在执行 `go generate` 的目录下的 `.cache-gen/` 文件夹中。
+A: 生成的文件在当前目录下：
+- `auto_register.go` - 注解自动注册
+- `<package>_cached.go` - 带缓存的实现（如 `product_cached.go`）
 
 ### Q: 如何修改缓存配置？
 

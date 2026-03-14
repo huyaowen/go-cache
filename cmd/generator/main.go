@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"generator/parser"
 	"generator/extractor"
@@ -13,17 +15,19 @@ import (
 )
 
 var (
-	outputDir string
-	verbose   bool
+	outputDir  string
+	verbose    bool
+	modulePath string
 )
 
 func init() {
 	flag.StringVar(&outputDir, "output", "./generated", "Output directory for generated code")
 	flag.BoolVar(&verbose, "verbose", false, "Enable verbose logging")
+	flag.StringVar(&modulePath, "module", "", "Module path (e.g., github.com/user/project). Auto-detected from go.mod if not specified")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <source-files...>\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Go Cache Framework Code Generator\n")
-		fmt.Fprintf(os.Stderr, "Parses Go source files with @cacheable annotations and generates wrapper code.\n\n")
+		fmt.Fprintf(os.Stderr, "Parses Go source files with @cacheable/@cacheput/@cacheevict annotations and generates wrapper code.\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExample:\n")
@@ -34,6 +38,44 @@ func init() {
 func logVerbose(format string, args ...interface{}) {
 	if verbose {
 		log.Printf(format, args...)
+	}
+}
+
+// detectModulePath tries to detect the module path from go.mod
+func detectModulePath() string {
+	// Try to find go.mod in current directory or parent directories
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	for {
+		goModPath := filepath.Join(dir, "go.mod")
+		if _, err := os.Stat(goModPath); err == nil {
+			// Found go.mod, read module path
+			file, err := os.Open(goModPath)
+			if err != nil {
+				return ""
+			}
+			defer file.Close()
+
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if strings.HasPrefix(line, "module ") {
+					return strings.TrimSpace(strings.TrimPrefix(line, "module"))
+				}
+			}
+			return ""
+		}
+
+		// Try parent directory
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached root
+			return ""
+		}
+		dir = parent
 	}
 }
 
@@ -53,6 +95,15 @@ func main() {
 	}
 
 	logVerbose("Output directory: %s", outputDir)
+
+	// Detect or use provided module path
+	modPath := modulePath
+	if modPath == "" {
+		modPath = detectModulePath()
+	}
+	if modPath != "" {
+		logVerbose("Module path: %s", modPath)
+	}
 
 	// Initialize parser
 	p := parser.NewParser()
@@ -76,6 +127,12 @@ func main() {
 
 		// Extract service info
 		services := p.ExtractServices(astFile, annotations)
+		
+		// Set import path for each service
+		for _, svc := range services {
+			svc.ImportPath = modPath
+		}
+		
 		logVerbose("Found %d services in %s", len(services), srcFile)
 
 		allServices = append(allServices, services...)

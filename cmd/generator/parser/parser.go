@@ -59,6 +59,22 @@ func (p *Parser) ExtractServices(file *ast.File, annotations []*extractor.Annota
 		annotationMap[ann.Type] = ann
 	}
 
+	// Collect imports from the file
+	imports := make(map[string]string)
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, "\"")
+		alias := ""
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		}
+		if alias == "" || alias == "_" || alias == "." {
+			// Use last part of path as alias
+			parts := strings.Split(path, "/")
+			alias = parts[len(parts)-1]
+		}
+		imports[alias] = path
+	}
+
 	// Find struct types and their methods
 	typeStructMap := make(map[string]*ast.StructType)
 	typeNameMap := make(map[string]string) // receiver type name -> struct name
@@ -121,9 +137,12 @@ func (p *Parser) ExtractServices(file *ast.File, annotations []*extractor.Annota
 		}
 
 		serviceInfo := &extractor.ServiceInfo{
-			Name:     typeName + "Decorator",
-			ImplType: typeName,
-			Methods:  methods,
+			Name:       typeName + "Decorator",
+			ImplType:   typeName,
+			Package:    file.Name.Name,
+			ImportPath: "", // Will be set by caller
+			Imports:    imports,
+			Methods:    methods,
 		}
 
 		services = append(services, serviceInfo)
@@ -232,7 +251,15 @@ func (p *Parser) typeToString(expr ast.Expr) string {
 	case *ast.MapType:
 		return "map[" + p.typeToString(t.Key) + "]" + p.typeToString(t.Value)
 	case *ast.ChanType:
-		return "chan " + p.typeToString(t.Value)
+		// Preserve channel direction: <-chan, chan<-, or chan
+		switch t.Dir {
+		case ast.RECV:
+			return "<-chan " + p.typeToString(t.Value)
+		case ast.SEND:
+			return "chan<- " + p.typeToString(t.Value)
+		default:
+			return "chan " + p.typeToString(t.Value)
+		}
 	case *ast.FuncType:
 		return p.funcTypeToString(t)
 	case *ast.InterfaceType:

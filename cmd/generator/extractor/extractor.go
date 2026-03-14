@@ -4,12 +4,17 @@ import (
 	"regexp"
 )
 
-// Annotation represents a @cacheable annotation
+// Annotation represents a cache annotation (supports @cacheable, @cacheput, @cacheevict)
 type Annotation struct {
 	Type      string // Method name
 	CacheName string // Cache name
 	Key       string // Cache key expression
 	TTL       string // Time to live
+	Condition string // Condition expression (SpEL)
+	Unless    string // Unless expression (SpEL)
+	Before    bool   // Execute before method (for cacheevict)
+	Sync      bool   // Synchronous execution
+	AnnotationType string // Annotation type: cacheable, cacheput, cacheevict
 }
 
 // ParamInfo represents a method parameter
@@ -36,23 +41,28 @@ type MethodInfo struct {
 
 // ServiceInfo represents a service struct with its methods
 type ServiceInfo struct {
-	Name     string       // Generated decorator name
-	ImplType string       // Original struct type name
-	Methods  []*MethodInfo
+	Name       string            // Generated decorator name
+	ImplType   string            // Original struct type name
+	Package    string            // Package name
+	ImportPath string            // Import path
+	Imports    map[string]string // Required imports (alias -> path)
+	Methods    []*MethodInfo
 }
 
 // ExtractAnnotation extracts annotation info from a comment string
+// Supports: @cacheable, @cacheput, @cacheevict
 // Example: // @cacheable(cache="users", key="#id", ttl="30m")
 func ExtractAnnotation(comment string) *Annotation {
-	// Match @cacheable annotation
-	re := regexp.MustCompile(`//\s*@cacheable\s*\((.*)\)`)
+	// Match @cacheable, @cacheput, @cacheevict annotations
+	re := regexp.MustCompile(`//\s*@(cacheable|cacheput|cacheevict)\s*\((.*)\)`)
 	matches := re.FindStringSubmatch(comment)
 	
-	if len(matches) != 2 {
+	if len(matches) != 3 {
 		return nil
 	}
 	
-	paramsStr := matches[1]
+	annotationType := matches[1]
+	paramsStr := matches[2]
 	params := parseAnnotationParams(paramsStr)
 	
 	if len(params) == 0 {
@@ -60,9 +70,14 @@ func ExtractAnnotation(comment string) *Annotation {
 	}
 	
 	annotation := &Annotation{
-		CacheName: getParam(params, "cache"),
-		Key:       getParam(params, "key"),
-		TTL:       getParam(params, "ttl"),
+		AnnotationType: annotationType,
+		CacheName:      getParam(params, "cache"),
+		Key:            getParam(params, "key"),
+		TTL:            getParam(params, "ttl"),
+		Condition:      getParam(params, "condition"),
+		Unless:         getParam(params, "unless"),
+		Before:         getParam(params, "before") == "true",
+		Sync:           getParam(params, "sync") == "true",
 	}
 	
 	// Validate required fields

@@ -8,16 +8,23 @@ import (
 	"github.com/coderiser/go-cache/examples/grpc-demo/model"
 )
 
-// OrderService 订单服务（带缓存）
-type OrderService struct {
+// OrderService 订单服务接口
+type OrderService interface {
+	GetOrder(id int64) (*model.Order, error)
+	CreateOrder(userID, productID int64, quantity int) (*model.Order, error)
+	UpdateOrderStatus(id int64, status string) (*model.Order, error)
+}
+
+// orderService 订单服务实现（带缓存）
+type orderService struct {
 	mu      sync.RWMutex
 	orders  map[int64]*model.Order
 	nextID  int64
 }
 
 // NewOrderService 创建订单服务实例
-func NewOrderService() *OrderService {
-	return &OrderService{
+func NewOrderService() OrderService {
+	return &orderService{
 		orders: make(map[int64]*model.Order),
 		nextID: 1,
 	}
@@ -25,7 +32,7 @@ func NewOrderService() *OrderService {
 
 // GetOrder 获取订单
 // @cacheable(cache="orders", key="#id", ttl="30m")
-func (s *OrderService) GetOrder(id int64) (*model.Order, error) {
+func (s *orderService) GetOrder(id int64) (*model.Order, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -39,7 +46,7 @@ func (s *OrderService) GetOrder(id int64) (*model.Order, error) {
 
 // CreateOrder 创建订单
 // @cacheput(cache="orders", key="#result.ID", ttl="30m")
-func (s *OrderService) CreateOrder(userID, productID int64, quantity int) (*model.Order, error) {
+func (s *orderService) CreateOrder(userID, productID int64, quantity int) (*model.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -61,7 +68,7 @@ func (s *OrderService) CreateOrder(userID, productID int64, quantity int) (*mode
 
 // UpdateOrderStatus 更新订单状态
 // @cacheput(cache="orders", key="#id", ttl="30m")
-func (s *OrderService) UpdateOrderStatus(id int64, status string) (*model.Order, error) {
+func (s *orderService) UpdateOrderStatus(id int64, status string) (*model.Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

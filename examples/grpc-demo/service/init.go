@@ -6,23 +6,30 @@ import (
 
 // 零配置服务初始化（gRPC 示例）
 
-// 创建带缓存的服务实例（小写变量名避免冲突）
+// 创建带缓存的服务实例
 var (
-	_userService  = proxy.SimpleDecorate(NewUserService())
-	_orderService = proxy.SimpleDecorate(NewOrderService())
+	_userService  UserService
+	_orderService OrderService
 )
 
 // UserService 获取用户服务实例（带缓存）
-func UserService() *proxy.DecoratedService[*UserService] {
+func UserService() UserService {
 	return _userService
 }
 
 // OrderService 获取订单服务实例（带缓存）
-func OrderService() *proxy.DecoratedService[*OrderService] {
+func OrderService() OrderService {
 	return _orderService
+}
+
+func init() {
+	// SimpleDecorateWithInterface 返回接口类型
+	// 可以直接调用方法，无需 Invoke()
+	_userService = proxy.SimpleDecorateWithInterface(NewUserService(), _userService)
+	_orderService = proxy.SimpleDecorateWithInterface(NewOrderService(), _orderService)
 }
 
 // 使用说明:
 // 1. 在方法前添加 @ 注解
 // 2. 导入 cache 包触发自动扫描
-// 3. 直接使用装饰后的服务
+// 3. 直接调用方法：user, _ := UserService().GetUser(123)

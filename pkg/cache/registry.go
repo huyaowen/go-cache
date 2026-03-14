@@ -11,6 +11,11 @@ var (
 	registryMu        sync.RWMutex
 )
 
+// init 初始化时注册全局注解获取函数到 proxy 包
+func init() {
+	proxy.SetGlobalAnnotationGetter(GetAllAnnotations)
+}
+
 // RegisterGlobalAnnotation 注册全局注解 (供代码生成器调用)
 //
 // 这是方案 G 的核心机制：通过 init() 自动注册所有带注解的方法，

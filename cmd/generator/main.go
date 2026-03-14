@@ -647,16 +647,18 @@ func generateCachedServiceForInterface(interfaceName string, interfaceInfo *Inte
 	for _, method := range interfaceInfo.Methods {
 		for _, param := range method.Params {
 			if idx := strings.Index(param.Type, "."); idx > 0 {
-				pkgName := param.Type[:idx]
-				if importPath := findImportPath(scanDir, pkgName); importPath != "" {
+				pkgName := strings.TrimLeft(param.Type[:idx], "*")
+				importPath := findImportPath(scanDir, pkgName)
+				if importPath != "" {
 					importsMap[importPath] = ""
 				}
 			}
 		}
 		for _, result := range method.Results {
 			if idx := strings.Index(result.Type, "."); idx > 0 {
-				pkgName := result.Type[:idx]
-				if importPath := findImportPath(scanDir, pkgName); importPath != "" {
+				pkgName := strings.TrimLeft(result.Type[:idx], "*")
+				importPath := findImportPath(scanDir, pkgName)
+				if importPath != "" {
 					importsMap[importPath] = ""
 				}
 			}

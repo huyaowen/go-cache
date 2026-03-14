@@ -341,14 +341,48 @@ func parseAnnotation(comment string) *CacheAnnotation {
 
 func generateCode(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo, scanDir string) {
 	// 1. 生成注解注册代码
-	generateAnnotationRegistration(annotations)
+	generateAnnotationRegistration(annotations, scanDir)
 	
 	// 2. 生成接口包装器代码
 	generateInterfaceWrappers(annotations, interfaces, scanDir)
 }
 
+// getPackageName 从目录中获取包名
+func getPackageName(scanDir string) string {
+	// 尝试从当前目录的 Go 文件推断包名
+	files, err := filepath.Glob(filepath.Join(scanDir, "*.go"))
+	if err != nil {
+		return "service" // 默认包名
+	}
+	
+	// 读取第一个非生成文件的包名
+	for _, file := range files {
+		// 跳过生成的文件
+		if strings.Contains(file, "auto_register") || 
+		   strings.Contains(file, "_cached.go") ||
+		   strings.Contains(file, "generated_") {
+			continue
+		}
+		
+		// 读取文件解析包名
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		
+		for _, line := range strings.Split(string(content), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "package ") && len(line) > 8 {
+				return strings.TrimSpace(line[8:])
+			}
+		}
+	}
+	
+	return "service" // 默认包名
+}
+
 // generateAnnotationRegistration 生成注解注册代码
-func generateAnnotationRegistration(annotations map[string]map[string]*CacheAnnotation) {
+func generateAnnotationRegistration(annotations map[string]map[string]*CacheAnnotation, scanDir string) {
 	// 创建输出目录
 	outputDir := "."
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
@@ -356,6 +390,9 @@ func generateAnnotationRegistration(annotations map[string]map[string]*CacheAnno
 		os.Exit(1)
 	}
 
+	// 获取当前目录的包名
+	packageName := getPackageName(scanDir)
+	
 	total := countAnnotations(annotations)
 	timestamp := time.Now().Format(time.RFC3339)
 
@@ -363,7 +400,7 @@ func generateAnnotationRegistration(annotations map[string]map[string]*CacheAnno
 // Generated at: %s
 // Total annotations: %d
 
-package service
+package %s
 
 import (
 	"github.com/coderiser/go-cache/pkg/proxy"
@@ -371,7 +408,7 @@ import (
 )
 
 func init() {
-`, timestamp, total)
+`, timestamp, total, packageName)
 
 	for typeName, methods := range annotations {
 		for methodName, annotation := range methods {
@@ -426,6 +463,9 @@ func init() {
 
 // generateInterfaceWrappers 生成接口包装器代码（方案 G：Beego 融合版）
 func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo, scanDir string) {
+	// 获取当前目录的包名（用于生成的代码）
+	packageName := getPackageName(scanDir)
+	
 	// 找出有注解的接口，为它们生成包装器
 	for interfaceName, interfaceInfo := range interfaces {
 		// 检查是否有对应的实现类型有注解
@@ -451,7 +491,7 @@ func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotatio
 		}
 		
 		// 生成包装器代码（方案 G）
-		generateCachedServiceForInterface(interfaceName, interfaceInfo, expectedImpl, annotations[expectedImpl], scanDir)
+		generateCachedServiceForInterface(interfaceName, interfaceInfo, expectedImpl, annotations[expectedImpl], scanDir, packageName)
 	}
 }
 
@@ -535,7 +575,7 @@ func getModelImportPath(scanDir string) string {
 }
 
 // generateCachedServiceForInterface 为单个接口生成缓存服务（方案 G）
-func generateCachedServiceForInterface(interfaceName string, interfaceInfo *InterfaceInfo, implName string, typeAnnotations map[string]*CacheAnnotation, scanDir string) {
+func generateCachedServiceForInterface(interfaceName string, interfaceInfo *InterfaceInfo, implName string, typeAnnotations map[string]*CacheAnnotation, scanDir string, packageName string) {
 	// serviceName 是大写开头的服务名（用于类型名，如 UserService）
 	serviceName := strings.TrimSuffix(interfaceName, "Interface")
 	// rawServiceFuncName 是原始服务构造函数名（如 NewProductService）
@@ -611,7 +651,7 @@ func New%[1]sWithManager(manager core.CacheManager) %[2]s {
 // Generated at: %s
 // Interface: %s
 
-package service
+package %s
 
 import (
 	"context"
@@ -631,7 +671,7 @@ type cached%s struct {
 }
 
 %s
-`, timestamp, interfaceName, importsStr, serviceName, interfaceName, serviceName, interfaceName, newServiceFuncs)
+`, timestamp, interfaceName, packageName, importsStr, serviceName, interfaceName, serviceName, interfaceName, newServiceFuncs)
 
 	// 生成每个接口方法的实现
 	for _, method := range interfaceInfo.Methods {

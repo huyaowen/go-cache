@@ -455,6 +455,85 @@ func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotatio
 	}
 }
 
+// getModulePath 从 go.mod 文件读取模块路径
+func getModulePath(scanDir string) string {
+	// 尝试在 scanDir 中查找 go.mod
+	goModPath := filepath.Join(scanDir, "go.mod")
+	
+	// 如果 scanDir 中没有，尝试父目录
+	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+		parentDir := filepath.Dir(scanDir)
+		goModPath = filepath.Join(parentDir, "go.mod")
+	}
+	
+	// 读取 go.mod
+	content, err := os.ReadFile(goModPath)
+	if err != nil {
+		// 回退到旧逻辑
+		return ""
+	}
+	
+	// 解析 module 行
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module"))
+		}
+	}
+	
+	return ""
+}
+
+// getModelImportPath 推导 model 包的导入路径
+func getModelImportPath(scanDir string) string {
+	// 优先从 go.mod 读取模块路径
+	modulePath := getModulePath(scanDir)
+	
+	if modulePath != "" {
+		// 检查 scanDir 的目录结构
+		absDir, _ := filepath.Abs(scanDir)
+		
+		// 判断 model 包的位置
+		// 情况 1: scanDir 是 service 目录，model 在同级
+		// 情况 2: scanDir 是项目根目录，model 在子目录
+		
+		dirName := filepath.Base(absDir)
+		if dirName == "service" {
+			// model 在同级目录
+			return fmt.Sprintf("%s/model", modulePath)
+		}
+		
+		// 检查 model 目录是否存在
+		modelDir := filepath.Join(filepath.Dir(absDir), "model")
+		if _, err := os.Stat(modelDir); err == nil {
+			// model 在父目录
+			return fmt.Sprintf("%s/model", modulePath)
+		}
+		
+		// model 在子目录
+		return fmt.Sprintf("%s/model", modulePath)
+	}
+	
+	// 回退到旧逻辑（仅用于示例项目）
+	absDir, _ := filepath.Abs(scanDir)
+	dirName := filepath.Base(absDir)
+	
+	if dirName == "service" {
+		parentDir := filepath.Base(filepath.Dir(absDir))
+		if parentDir != "" && parentDir != "/" {
+			dirName = parentDir
+		}
+	}
+	
+	// 检测是否是 examples 目录
+	if strings.Contains(absDir, "examples") {
+		return fmt.Sprintf("github.com/coderiser/go-cache/examples/%s/model", dirName)
+	}
+	
+	// 默认回退
+	return fmt.Sprintf("%s/model", modulePath)
+}
+
 // generateCachedServiceForInterface 为单个接口生成缓存服务（方案 G）
 func generateCachedServiceForInterface(interfaceName string, interfaceInfo *InterfaceInfo, implName string, typeAnnotations map[string]*CacheAnnotation, scanDir string) {
 	// serviceName 是大写开头的服务名（用于类型名，如 UserService）
@@ -469,22 +548,8 @@ func generateCachedServiceForInterface(interfaceName string, interfaceInfo *Inte
 	// 使用别名避免包名冲突
 	importsMap["github.com/coderiser/go-cache/pkg/cache"] = "gocache"
 	
-	// 从扫描目录推导 model 包路径
-	// scanDir 如：. 或 examples/gin-web
-	// 需要智能识别示例目录（可能是当前目录或父目录）
-	absDir, _ := filepath.Abs(scanDir)
-	dirName := filepath.Base(absDir)
-	
-	// 如果 dirName 是 "service"，说明在 service 目录下运行，需要取父目录
-	if dirName == "service" {
-		parentDir := filepath.Base(filepath.Dir(absDir))
-		if parentDir != "" && parentDir != "/" {
-			dirName = parentDir
-		}
-	}
-	
-	// 推导模块路径：从 go.mod 读取或根据目录结构推导
-	modelPath := fmt.Sprintf("github.com/coderiser/go-cache/examples/%s/model", dirName)
+	// 推导 model 包路径（从 go.mod 读取，不再硬编码）
+	modelPath := getModelImportPath(scanDir)
 	
 	for _, method := range interfaceInfo.Methods {
 		for _, param := range method.Params {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -525,53 +526,107 @@ func getModulePath(scanDir string) string {
 }
 
 // getModelImportPath 推导 model 包的导入路径
-func getModelImportPath(scanDir string) string {
-	// 优先从 go.mod 读取模块路径
-	modulePath := getModulePath(scanDir)
+// 通过分析现有代码中的 import 语句来确定正确的导入路径
+func getModelImportPath(scanDir string, method *MethodInfo) string {
+	// 优先从方法参数和返回值的类型中提取完整的导入路径
+	for _, param := range method.Params {
+		// 如果参数类型包含包名（如 model.User），提取导入路径
+		if idx := strings.Index(param.Type, "."); idx > 0 {
+			pkgName := param.Type[:idx]
+			// 从当前目录的 Go 文件中查找该包的完整导入路径
+			if importPath := findImportPath(scanDir, pkgName); importPath != "" {
+				return importPath
+			}
+		}
+	}
 	
+	for _, result := range method.Results {
+		if idx := strings.Index(result.Type, "."); idx > 0 {
+			pkgName := result.Type[:idx]
+			if importPath := findImportPath(scanDir, pkgName); importPath != "" {
+				return importPath
+			}
+		}
+	}
+	
+	// 如果无法从类型推断，使用默认逻辑
+	modulePath := getModulePath(scanDir)
 	if modulePath != "" {
-		// 检查 scanDir 的目录结构
-		absDir, _ := filepath.Abs(scanDir)
-		
-		// 判断 model 包的位置
-		// 情况 1: scanDir 是 service 目录，model 在同级
-		// 情况 2: scanDir 是项目根目录，model 在子目录
-		
-		dirName := filepath.Base(absDir)
-		if dirName == "service" {
-			// model 在同级目录
-			return fmt.Sprintf("%s/model", modulePath)
-		}
-		
-		// 检查 model 目录是否存在
-		modelDir := filepath.Join(filepath.Dir(absDir), "model")
-		if _, err := os.Stat(modelDir); err == nil {
-			// model 在父目录
-			return fmt.Sprintf("%s/model", modulePath)
-		}
-		
-		// model 在子目录
+		// 默认假设 model 在同级目录
 		return fmt.Sprintf("%s/model", modulePath)
 	}
 	
-	// 回退到旧逻辑（仅用于示例项目）
-	absDir, _ := filepath.Abs(scanDir)
-	dirName := filepath.Base(absDir)
+	// 回退
+	return "model"
+}
+
+// findImportPath 从当前目录的 Go 文件中查找指定包名的完整导入路径
+func findImportPath(scanDir string, pkgName string) string {
+	// 读取当前目录的所有 Go 文件
+	files, err := filepath.Glob(filepath.Join(scanDir, "*.go"))
+	if err != nil {
+		return ""
+	}
 	
-	if dirName == "service" {
-		parentDir := filepath.Base(filepath.Dir(absDir))
-		if parentDir != "" && parentDir != "/" {
-			dirName = parentDir
+	for _, file := range files {
+		// 跳过生成的文件
+		if strings.Contains(file, "auto_register") || 
+		   strings.Contains(file, "_cached.go") ||
+		   strings.Contains(file, "generated_") {
+			continue
+		}
+		
+		// 解析 import 语句
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		
+		// 查找 import 块（多行格式）
+		importStart := bytes.Index(content, []byte("import ("))
+		if importStart != -1 {
+			importEnd := bytes.Index(content[importStart:], []byte(")\n"))
+			if importEnd != -1 {
+				importBlock := content[importStart : importStart+importEnd]
+				
+				// 查找包名对应的导入路径
+				lines := bytes.Split(importBlock, []byte("\n"))
+				for _, line := range lines {
+					line = bytes.TrimSpace(line)
+					// 提取导入路径
+					start := bytes.Index(line, []byte("\""))
+					end := bytes.LastIndex(line, []byte("\""))
+					if start != -1 && end != -1 && end > start {
+						importPath := string(line[start+1 : end])
+						// 检查导入路径的包名是否匹配
+						// 如："github.com/xxx/model" 的包名是 "model"
+						baseName := filepath.Base(importPath)
+						if baseName == pkgName {
+							return importPath
+						}
+					}
+				}
+			}
+		}
+		
+		// 查找单行 import 格式：import "path"
+		if importStart == -1 {
+			importStart = bytes.Index(content, []byte("import \""))
+			if importStart != -1 {
+				start := importStart + len("import \"")
+				end := bytes.Index(content[start:], []byte("\""))
+				if end != -1 {
+					importPath := string(content[start : start+end])
+					// 检查是否匹配包名
+					if strings.HasSuffix(importPath, "/"+pkgName) || importPath == pkgName {
+						return importPath
+					}
+				}
+			}
 		}
 	}
 	
-	// 检测是否是 examples 目录
-	if strings.Contains(absDir, "examples") {
-		return fmt.Sprintf("github.com/coderiser/go-cache/examples/%s/model", dirName)
-	}
-	
-	// 默认回退
-	return fmt.Sprintf("%s/model", modulePath)
+	return ""
 }
 
 // generateCachedServiceForInterface 为单个接口生成缓存服务（方案 G）
@@ -588,18 +643,22 @@ func generateCachedServiceForInterface(interfaceName string, interfaceInfo *Inte
 	// 使用别名避免包名冲突
 	importsMap["github.com/coderiser/go-cache/pkg/cache"] = "gocache"
 	
-	// 推导 model 包路径（从 go.mod 读取，不再硬编码）
-	modelPath := getModelImportPath(scanDir)
-	
+	// 为每个方法收集需要的导入（分析方法中实际使用的类型）
 	for _, method := range interfaceInfo.Methods {
 		for _, param := range method.Params {
-			if strings.Contains(param.Type, "model.") {
-				importsMap[modelPath] = ""
+			if idx := strings.Index(param.Type, "."); idx > 0 {
+				pkgName := param.Type[:idx]
+				if importPath := findImportPath(scanDir, pkgName); importPath != "" {
+					importsMap[importPath] = ""
+				}
 			}
 		}
 		for _, result := range method.Results {
-			if strings.Contains(result.Type, "model.") {
-				importsMap[modelPath] = ""
+			if idx := strings.Index(result.Type, "."); idx > 0 {
+				pkgName := result.Type[:idx]
+				if importPath := findImportPath(scanDir, pkgName); importPath != "" {
+					importsMap[importPath] = ""
+				}
 			}
 		}
 	}

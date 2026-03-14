@@ -32,3 +32,15 @@ vendor/
 # 临时文件
 tmp/
 temp/
+
+# ===== 自动生成的代码（不提交）=====
+# 代码生成器输出
+**/auto_register.go
+**/*_cached.go
+**/*_generated.go
+**/*.cache-gen/
+
+# ===== 过程文档（不提交）=====
+TEST_REPORT.md
+VERIFICATION_REPORT.md
+*.test.md

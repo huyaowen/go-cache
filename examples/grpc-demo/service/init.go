@@ -5,12 +5,24 @@ import (
 )
 
 // 零配置服务初始化（gRPC 示例）
-// 与 gin-web 示例相同，无需特殊配置
 
-// UserService 用户服务实例（带缓存）
-var UserService = proxy.SimpleDecorate(NewUserServiceRaw())
+// 创建带缓存的服务实例（小写变量名避免冲突）
+var (
+	_userService  = proxy.SimpleDecorate(NewUserService())
+	_orderService = proxy.SimpleDecorate(NewOrderService())
+)
 
-// OrderService 订单服务实例（带缓存）
-var OrderService = proxy.SimpleDecorate(NewOrderServiceRaw())
+// UserService 获取用户服务实例（带缓存）
+func UserService() *proxy.DecoratedService[*UserService] {
+	return _userService
+}
 
-// 使用说明参考 gin-web 示例
+// OrderService 获取订单服务实例（带缓存）
+func OrderService() *proxy.DecoratedService[*OrderService] {
+	return _orderService
+}
+
+// 使用说明:
+// 1. 在方法前添加 @ 注解
+// 2. 导入 cache 包触发自动扫描
+// 3. 直接使用装饰后的服务

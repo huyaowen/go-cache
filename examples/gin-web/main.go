@@ -15,7 +15,7 @@ func main() {
 	// 并注册到代理系统
 	
 	// 初始化服务（自动应用缓存）
-	userService := service.NewUserService()
+	userService := service.UserService()
 
 	// 创建处理器
 	userHandler := handler.NewUserHandler(userService)

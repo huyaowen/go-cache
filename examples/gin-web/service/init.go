@@ -10,22 +10,27 @@ import (
 // cache 包的 init() 会自动扫描所有带 @ 注解的方法
 // 并注册到缓存系统
 
-// UserService 用户服务实例（带缓存）
-// 通过 proxy.SimpleDecorate 自动装饰
-var UserService = proxy.SimpleDecorate(NewUserServiceRaw())
+// 创建带缓存的服务实例（小写变量名避免冲突）
+var (
+	_userService  = proxy.SimpleDecorate(NewUserService())
+	_orderService = proxy.SimpleDecorate(NewOrderService())
+)
 
-// OrderService 订单服务实例（带缓存）
-var OrderService = proxy.SimpleDecorate(NewOrderServiceRaw())
+// UserService 获取用户服务实例（带缓存）
+// 返回装饰后的服务，可以直接调用方法
+func UserService() *proxy.DecoratedService[*UserService] {
+	return _userService
+}
 
-// 说明:
-// 1. 在 user.go 和 order.go 中，方法前添加注解：
-//    // @cacheable(cache="users", key="#id", ttl="30m")
-//    func (s *userService) GetUser(id int64) (*User, error) { ... }
-//
-// 2. 导入 cache 包触发自动扫描（见 main.go）:
-//    import _ "github.com/coderiser/go-cache/pkg/cache"
-//
+// OrderService 获取订单服务实例（带缓存）
+func OrderService() *proxy.DecoratedService[*OrderService] {
+	return _orderService
+}
+
+// 使用说明:
+// 1. 在方法前添加 @ 注解（见 user.go, order.go）
+// 2. 导入 cache 包触发自动扫描（见 main.go）
 // 3. 直接使用装饰后的服务:
-//    user, _ := UserService.GetUser(123)
+//    results, _ := UserService().Invoke("GetUser", 123)
 //
 // 就这么简单！无需 go generate，无需生成额外代码！

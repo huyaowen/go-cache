@@ -10,11 +10,11 @@ import (
 
 // UserHandler 用户处理器
 type UserHandler struct {
-	userService service.UserServiceInterface
+	userService *service.UserService
 }
 
 // NewUserHandler 创建用户处理器
-func NewUserHandler(userService service.UserServiceInterface) *UserHandler {
+func NewUserHandler(userService *service.UserService) *UserHandler {
 	return &UserHandler{
 		userService: userService,
 	}
@@ -29,9 +29,27 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.GetUser(id)
+	// 使用 Invoke 调用装饰后的方法
+	results, err := h.userService.Invoke("GetUser", id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(results) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no result"})
+		return
+	}
+
+	// 检查错误
+	if errResult, ok := results[1].(error); ok && errResult != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": errResult.Error()})
+		return
+	}
+
+	user, ok := results[0].(*service.UserService)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid response type"})
 		return
 	}
 
@@ -50,13 +68,18 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.CreateUser(req.Name, req.Email)
+	results, err := h.userService.Invoke("CreateUser", req.Name, req.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, user)
+	if len(results) == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "no result"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, results[0])
 }
 
 // DeleteUser 删除用户
@@ -68,8 +91,14 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	if err := h.userService.DeleteUser(id); err != nil {
+	results, err := h.userService.Invoke("DeleteUser", id)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	if errResult, ok := results[0].(error); ok && errResult != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": errResult.Error()})
 		return
 	}
 

@@ -73,11 +73,15 @@ type annotatedMethod struct {
 }
 
 // scanAnnotatedMethods 扫描所有带注解的方法
-// 注意：Go 不支持运行时读取注释，此函数目前返回空
-// 完整实现需要在编译时嵌入元数据
+// 注意：Go 不支持运行时读取注释，此方案已废弃
+// 
+// 替代方案：使用代码生成器 (cmd/generator) 在编译时生成注解注册代码
+// 参考：examples/gin-web/service/auto_register.go
+//
+// 此函数保留仅用于向后兼容，新功能请使用代码生成器方案
 func scanAnnotatedMethods(targetType reflect.Type) []*annotatedMethod {
-	// TODO: 实现完整的注解扫描
-	// 目前返回空，表示没有注解
+	// 运行时注解扫描在 Go 中不可行（无法读取注释）
+	// 已废弃：请使用代码生成器方案 (go-cache-gen)
 	return make([]*annotatedMethod, 0)
 }
 

@@ -934,10 +934,15 @@ func buildResultTypes(results []ParamInfo) string {
 // 支持：#paramName, #result.fieldName, 字符串拼接
 // 返回 key 的值部分（不包含 cache name 前缀），如：id 或 result.ID
 func buildKeyExpression(params []ParamInfo, results []ParamInfo, keyExpr string) string {
-	// 处理 #result.XXX 表达式
+	// 处理 #result.XXX 表达式（如：#result.Id, #result.UserID）
 	if strings.HasPrefix(keyExpr, "#result.") {
 		fieldName := strings.TrimPrefix(keyExpr, "#result.")
-		return fmt.Sprintf(`result.%s`, fieldName)
+		// 检查是否有返回值
+		if len(results) > 0 && results[0].Type != "error" {
+			return fmt.Sprintf(`result.%s`, fieldName)
+		}
+		// 无返回值时使用默认值
+		return `"default"`
 	}
 	
 	// 处理简单参数 #paramName

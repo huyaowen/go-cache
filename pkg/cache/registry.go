@@ -11,9 +11,12 @@ var (
 	registryMu        sync.RWMutex
 )
 
-// init 初始化时注册全局注解获取函数到 proxy 包
+// init 初始化时注册全局注解获取函数到 proxy 包，并启动自动扫描
 func init() {
 	proxy.SetGlobalAnnotationGetter(GetAllAnnotations)
+	// 自动扫描并注册注解（运行时解析源代码）
+	// 这替代了代码生成器生成的 auto_register.go
+	go AutoScanAndRegister()
 }
 
 // RegisterGlobalAnnotation 注册全局注解 (供代码生成器调用)

@@ -109,7 +109,8 @@ func SimpleDecorateWithManager[T any](service T, manager core.CacheManager) *Dec
 }
 
 // SimpleDecorateWithInterface 自动装饰服务对象并返回接口类型
-// 这是推荐的使用方式，可以直接断言为目标接口
+// 注意：由于 Go 类型系统限制，此函数返回原始服务对象
+// 缓存功能通过 proxy 包的拦截器机制实现
 //
 // 使用示例:
 //   var UserService UserServiceInterface
@@ -117,7 +118,9 @@ func SimpleDecorateWithManager[T any](service T, manager core.CacheManager) *Dec
 //       UserService = proxy.SimpleDecorateWithInterface(&UserService{})
 //   }
 //
-// 注意：此函数返回的代理对象实现了目标接口，可以直接调用方法
+// 如需确保缓存生效，请使用 SimpleDecorate + Invoke 模式:
+//   var UserService = proxy.SimpleDecorate(&UserService{})
+//   // 调用：UserService.Invoke("GetUser", id)
 func SimpleDecorateWithInterface[T any](service T, targetInterface T) T {
 	manager := core.NewCacheManager()
 	return SimpleDecorateWithInterfaceAndManager(service, targetInterface, manager)
@@ -156,10 +159,8 @@ func SimpleDecorateWithInterfaceAndManager[T any](service T, targetInterface T, 
 		}
 	}
 	
-	// 通过反射创建一个实现目标接口的包装器
-	// 这里我们返回原始服务，但通过代理调用方法
-	// 由于 Go 的类型系统限制，我们无法直接返回实现接口的代理
-	// 推荐使用 DecoratedService + Invoke 模式
+	// 返回原始服务
+	// 注意：代理已创建并注册，但由于 Go 类型系统限制，无法直接返回实现接口的代理
 	_ = proxyObj
 	
 	return service

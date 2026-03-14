@@ -5,12 +5,17 @@ import (
 	"log"
 
 	"github.com/coderiser/go-cache/examples/grpc-demo/service"
+	_ "github.com/coderiser/go-cache/pkg/cache" // 导入 cache 包，触发自动注解扫描
 )
 
 func main() {
-	// 创建服务实例（自动使用全局缓存管理器）
-	userSvc := service.NewUserService()
-	orderSvc := service.NewOrderService()
+	// 🎉 零配置！无需运行代码生成器
+	// cache 包的 init() 会自动扫描 service 包中的注解
+	// 并注册到代理系统
+	
+	// 获取装饰后的服务实例（带缓存）
+	userSvc := service.GetUserService()
+	orderSvc := service.GetOrderService()
 
 	// 测试用户服务
 	user, err := userSvc.GetUser(1)

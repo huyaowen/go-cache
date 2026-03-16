@@ -44,6 +44,14 @@ type ServiceInfo struct {
 	Implements  string                 // 实现的接口名（匹配后设置）
 	Methods     map[string]*MethodInfo // 方法名 -> 方法信息
 	Constructor *ConstructorInfo       // 构造函数信息（可选）
+	Fields      []*FieldInfo           // 结构体字段信息（用于智能初始化）
+}
+
+// FieldInfo 字段信息
+type FieldInfo struct {
+	Name string // 字段名
+	Type string // 字段类型
+	Kind string // 字段种类：map/slice/struct/pointer/basic
 }
 
 // ConstructorInfo 构造函数信息

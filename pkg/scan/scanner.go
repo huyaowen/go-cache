@@ -176,7 +176,7 @@ func (s *Scanner) parseFile(path, modulePath string) (*FileInfo, string, string,
 	return fileInfo, pkgPath, pkgName, nil
 }
 
-// parseTypeDecl 解析类型声明（接口定义）
+// parseTypeDecl 解析类型声明（接口和服务定义）
 func (s *Scanner) parseTypeDecl(decl *ast.GenDecl, fileInfo *FileInfo, commentMap map[int]string) {
 	for _, spec := range decl.Specs {
 		typeSpec, ok := spec.(*ast.TypeSpec)
@@ -184,32 +184,97 @@ func (s *Scanner) parseTypeDecl(decl *ast.GenDecl, fileInfo *FileInfo, commentMa
 			continue
 		}
 
+		// 解析接口
 		ifaceType, ok := typeSpec.Type.(*ast.InterfaceType)
-		if !ok {
+		if ok {
+			ifaceName := typeSpec.Name.Name
+			ifaceInfo := &InterfaceInfo{
+				Name:    ifaceName,
+				Methods: make([]*MethodSpec, 0),
+			}
+
+			for _, method := range ifaceType.Methods.List {
+				funcType, ok := method.Type.(*ast.FuncType)
+				if !ok {
+					continue
+				}
+
+				methodSpec := s.parseMethodSpec(method, funcType)
+				if methodSpec != nil {
+					ifaceInfo.Methods = append(ifaceInfo.Methods, methodSpec)
+				}
+			}
+
+			if len(ifaceInfo.Methods) > 0 {
+				fileInfo.Interfaces[ifaceName] = ifaceInfo
+			}
 			continue
 		}
 
-		ifaceName := typeSpec.Name.Name
-		ifaceInfo := &InterfaceInfo{
-			Name:    ifaceName,
-			Methods: make([]*MethodSpec, 0),
-		}
-
-		for _, method := range ifaceType.Methods.List {
-			funcType, ok := method.Type.(*ast.FuncType)
-			if !ok {
-				continue
+		// 解析结构体（服务）
+		structType, ok := typeSpec.Type.(*ast.StructType)
+		if ok {
+			svcName := typeSpec.Name.Name
+			svcInfo := &ServiceInfo{
+				TypeName: svcName,
+				Methods:  make(map[string]*MethodInfo),
+				Fields:   make([]*FieldInfo, 0),
 			}
 
-			methodSpec := s.parseMethodSpec(method, funcType)
-			if methodSpec != nil {
-				ifaceInfo.Methods = append(ifaceInfo.Methods, methodSpec)
+			// 解析字段
+			if structType.Fields != nil {
+				for _, field := range structType.Fields.List {
+					fieldInfo := s.parseField(field)
+					if fieldInfo != nil {
+						svcInfo.Fields = append(svcInfo.Fields, fieldInfo)
+					}
+				}
 			}
-		}
 
-		if len(ifaceInfo.Methods) > 0 {
-			fileInfo.Interfaces[ifaceName] = ifaceInfo
+			fileInfo.Services[svcName] = svcInfo
 		}
+	}
+}
+
+// parseField 解析结构体字段
+func (s *Scanner) parseField(field *ast.Field) *FieldInfo {
+	if len(field.Names) == 0 {
+		return nil // 匿名字段
+	}
+
+	typeStr := getTypeString(field.Type, s.fset)
+	kind := s.getFieldKind(field.Type)
+
+	return &FieldInfo{
+		Name: field.Names[0].Name,
+		Type: typeStr,
+		Kind: kind,
+	}
+}
+
+// getFieldKind 获取字段类型种类
+func (s *Scanner) getFieldKind(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.MapType:
+		return "map"
+	case *ast.ArrayType, *ast.StarExpr:
+		if _, ok := t.(*ast.ArrayType); ok {
+			return "slice"
+		}
+		return "pointer"
+	case *ast.StructType:
+		return "struct"
+	case *ast.Ident:
+		// 基本类型
+		switch t.Name {
+		case "int", "int8", "int16", "int32", "int64",
+			"uint", "uint8", "uint16", "uint32", "uint64",
+			"float32", "float64", "string", "bool", "byte", "rune":
+			return "basic"
+		}
+		return "custom"
+	default:
+		return "unknown"
 	}
 }
 

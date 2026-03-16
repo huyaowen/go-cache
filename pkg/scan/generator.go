@@ -158,6 +158,26 @@ func (g *Generator) extractTypeImports(typeStr string, fileImports map[string]st
 	}
 }
 
+// generateFieldInit 生成字段的初始化代码
+func (g *Generator) generateFieldInit(field *FieldInfo) string {
+	switch field.Kind {
+	case "map":
+		// map[K]V -> make(map[K]V)
+		return fmt.Sprintf("make(%s)", field.Type)
+	case "slice":
+		// []T -> nil (slice 零值可用，不需要初始化)
+		return ""
+	case "pointer", "struct", "custom", "unknown":
+		// 指针、结构体、自定义类型使用零值
+		return ""
+	case "basic":
+		// 基本类型使用零值
+		return ""
+	default:
+		return ""
+	}
+}
+
 // generateWrapper 生成单个服务的缓存包装器
 func (g *Generator) generateWrapper(buf *bytes.Buffer, match *MatchResult) {
 	iface := match.Interface
@@ -226,7 +246,15 @@ func (g *Generator) generateConstructor(buf *bytes.Buffer, iface *InterfaceInfo,
 			buf.WriteString(fmt.Sprintf("\traw := %s()\n", svc.Constructor.Name))
 		}
 	} else {
-		buf.WriteString(fmt.Sprintf("\traw := &%s{}\n", svc.TypeName))
+		// 没有构造函数，智能生成初始化代码
+		buf.WriteString(fmt.Sprintf("\traw := &%s{\n", svc.TypeName))
+		for _, field := range svc.Fields {
+			initCode := g.generateFieldInit(field)
+			if initCode != "" {
+				buf.WriteString(fmt.Sprintf("\t\t%s: %s,\n", field.Name, initCode))
+			}
+		}
+		buf.WriteString("\t}\n")
 	}
 
 	buf.WriteString("\n")

@@ -85,13 +85,11 @@ func main() {
 	// 示例 4: 查看统计
 	fmt.Println("\n4️⃣  Cache Statistics:")
 	stats := hybridBackend.Stats()
-	fmt.Printf("   L1 Hits: %d\n", stats.L1Hits)
-	fmt.Printf("   L1 Misses: %d\n", stats.L1Misses)
-	fmt.Printf("   L2 Hits: %d\n", stats.L2Hits)
-	fmt.Printf("   L2 Misses: %d\n", stats.L2Misses)
-	fmt.Printf("   L2 Fallbacks: %d (L1 miss → L2 hit)\n", stats.L2Fallbacks)
-	fmt.Printf("   L1 Backfills: %d (L2 → L1 backfill)\n", stats.L1Backfills)
+	fmt.Printf("   Total Hits: %d\n", stats.Hits)
+	fmt.Printf("   Total Misses: %d\n", stats.Misses)
+	fmt.Printf("   Sets: %d\n", stats.Sets)
 	fmt.Printf("   Hit Rate: %.2f%%\n", stats.HitRate*100)
+	fmt.Println("   (Use GetHybridStats() for detailed L1/L2 stats)")
 
 	fmt.Println("\n=== Example Complete ===")
 }
@@ -137,23 +135,23 @@ func useMemoryOnly() {
 }
 
 // createCacheManager 使用 Hybrid 缓存创建 CacheManager
-func createCacheManager() *core.CacheManager {
+func createCacheManager() core.CacheManager {
 	manager := core.NewCacheManager()
 
-	// 创建 Hybrid 缓存
+	// 注册 Hybrid 缓存配置
 	hybridConfig := backend.DefaultHybridConfig()
 	hybridConfig.L1Config.Name = "users"
 	hybridConfig.L2Config.Addr = "localhost:6379"
 
-	hybridBackend, err := backend.NewHybridBackend(hybridConfig)
+	// 注册 hybrid 后端工厂
+	manager.RegisterBackend("hybrid", func(cfg *backend.CacheConfig) (backend.CacheBackend, error) {
+		return backend.NewHybridBackend(hybridConfig)
+	})
+
+	// GetCache 会自动使用注册的 backend 创建缓存
+	_, err := manager.GetCache("users")
 	if err != nil {
-		fmt.Printf("Warning: Hybrid cache not available, using Memory: %v\n", err)
-		// 降级使用内存缓存
-		memoryConfig := backend.DefaultCacheConfig("users")
-		memoryBackend, _ := backend.NewMemoryBackend(memoryConfig)
-		manager.AddCache("users", memoryBackend)
-	} else {
-		manager.AddCache("users", hybridBackend)
+		fmt.Printf("Warning: Failed to create hybrid cache: %v\n", err)
 	}
 
 	return manager

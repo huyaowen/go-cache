@@ -36,13 +36,12 @@ func main() {
 	defer redisBackend.Close()
 
 	// 创建 PubSub 缓存失效器
-	pubsubConfig := backend.DefaultPubSubInvalidatorConfig()
+	pubsubConfig := backend.DefaultCacheInvalidatorConfig()
 	pubsubConfig.Channel = "cache-invalidation"
-	pubsubConfig.RedisAddr = "localhost:6379"
 
-	invalidator, err := backend.NewPubSubInvalidator(pubsubConfig)
+	invalidator, err := backend.NewCacheInvalidator(pubsubConfig)
 	if err != nil {
-		fmt.Printf("❌ Failed to create PubSub invalidator: %v\n", err)
+		fmt.Printf("❌ Failed to create Cache invalidator: %v\n", err)
 		return
 	}
 	defer invalidator.Close()
@@ -76,7 +75,7 @@ func main() {
 }
 
 // updateData 更新数据并广播失效消息
-func updateData(ctx context.Context, backend backend.CacheBackend, invalidator *backend.PubSubInvalidator, key string, data interface{}) {
+func updateData(ctx context.Context, backend backend.CacheBackend, invalidator *backend.CacheInvalidator, key string, data interface{}) {
 	// 1. 更新数据库（模拟）
 	cacheStore[key] = data
 	fmt.Printf("   ✅ Database updated: %+v\n", data)
@@ -86,7 +85,7 @@ func updateData(ctx context.Context, backend backend.CacheBackend, invalidator *
 	fmt.Println("   ✅ Cache updated")
 
 	// 3. 广播失效消息
-	invalidator.Invalidate(ctx, key)
+	invalidator.Broadcast(key)
 	fmt.Println("   ✅ Invalidation message broadcasted")
 }
 
@@ -102,14 +101,14 @@ func reloadData(ctx context.Context, backend backend.CacheBackend, key string) {
 	fmt.Printf("   ✅ Cache reloaded: %+v\n", data)
 }
 
-// createPubSubInvalidator 创建 PubSub 缓存失效器（多实例共享）
-func createPubSubInvalidator(instanceID string) (*backend.PubSubInvalidator, error) {
-	config := backend.DefaultPubSubInvalidatorConfig()
+// createCacheInvalidator 创建 Cache 失效器（多实例共享）
+func createCacheInvalidator(instanceID string) (*backend.CacheInvalidator, error) {
+	config := backend.DefaultCacheInvalidatorConfig()
 	config.Channel = "cache-invalidation"
-	config.RedisAddr = "localhost:6379"
-	config.InstanceID = instanceID // 实例 ID，避免处理自己的消息
+	config.Addr = "localhost:6379"
+	_ = instanceID // 实例 ID（当前版本未使用）
 
-	return backend.NewPubSubInvalidator(config)
+	return backend.NewCacheInvalidator(config)
 }
 
 // 多实例部署示例
@@ -117,18 +116,18 @@ func multiInstanceDeployment() {
 	fmt.Println("=== Multi-Instance Deployment ===\n")
 
 	// 实例 1
-	instance1, _ := createPubSubInvalidator("instance-1")
+	instance1, _ := createCacheInvalidator("instance-1")
 	defer instance1.Close()
 
 	// 实例 2
-	instance2, _ := createPubSubInvalidator("instance-2")
+	instance2, _ := createCacheInvalidator("instance-2")
 	defer instance2.Close()
 
 	// 实例 3
-	instance3, _ := createPubSubInvalidator("instance-3")
+	instance3, _ := createCacheInvalidator("instance-3")
 	defer instance3.Close()
 
-	fmt.Println("✅ 3 instances deployed with PubSub invalidation")
+	fmt.Println("✅ 3 instances deployed with Cache invalidation")
 	fmt.Println("   • All instances share the same Redis PubSub channel")
 	fmt.Println("   • Updates from any instance invalidate all caches")
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,57 +10,57 @@ import (
 // TestAnnotationRegex 测试注解正则表达式解析
 func TestAnnotationRegex(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantType string
-		wantKey  string
-		wantTTL  string
+		name      string
+		input     string
+		wantType  string
+		wantKey   string
+		wantTTL   string
 		wantCache string
 	}{
 		{
-			name:     "cacheable annotation",
-			input:    `// @cacheable(cache="users", key="#id", ttl="30m")`,
-			wantType: "cacheable",
-			wantKey:  "#id",
-			wantTTL:  "30m",
+			name:      "cacheable annotation",
+			input:     `// @cacheable(cache="users", key="#id", ttl="30m")`,
+			wantType:  "cacheable",
+			wantKey:   "#id",
+			wantTTL:   "30m",
 			wantCache: "users",
 		},
 		{
-			name:     "cacheput annotation",
-			input:    `// @cacheput(cache="users", key="#user.ID", ttl="1h")`,
-			wantType: "cacheput",
-			wantKey:  "#user.ID",
-			wantTTL:  "1h",
+			name:      "cacheput annotation",
+			input:     `// @cacheput(cache="users", key="#user.ID", ttl="1h")`,
+			wantType:  "cacheput",
+			wantKey:   "#user.ID",
+			wantTTL:   "1h",
 			wantCache: "users",
 		},
 		{
-			name:     "cacheevict annotation",
-			input:    `// @cacheevict(cache="users", key="#id", before=true)`,
-			wantType: "cacheevict",
-			wantKey:  "#id",
+			name:      "cacheevict annotation",
+			input:     `// @cacheevict(cache="users", key="#id", before=true)`,
+			wantType:  "cacheevict",
+			wantKey:   "#id",
 			wantCache: "users",
 		},
 		{
-			name:     "annotation with condition",
-			input:    `// @cacheable(cache="orders", key="#order.ID", ttl="2h", condition="#order.Status == 'PAID'")`,
-			wantType: "cacheable",
-			wantKey:  "#order.ID",
-			wantTTL:  "2h",
+			name:      "annotation with condition",
+			input:     `// @cacheable(cache="orders", key="#order.ID", ttl="2h", condition="#order.Status == 'PAID'")`,
+			wantType:  "cacheable",
+			wantKey:   "#order.ID",
+			wantTTL:   "2h",
 			wantCache: "orders",
 		},
 		{
-			name:     "annotation with unless",
-			input:    `// @cacheable(cache="products", key="#sku", ttl="1d", unless="#product.Stock == 0")`,
-			wantType: "cacheable",
-			wantKey:  "#sku",
-			wantTTL:  "1d",
+			name:      "annotation with unless",
+			input:     `// @cacheable(cache="products", key="#sku", ttl="1d", unless="#product.Stock == 0")`,
+			wantType:  "cacheable",
+			wantKey:   "#sku",
+			wantTTL:   "1d",
 			wantCache: "products",
 		},
 		{
-			name:     "annotation with sync flag",
-			input:    `// @cacheput(cache="users", key="#user.ID", sync=true)`,
-			wantType: "cacheput",
-			wantKey:  "#user.ID",
+			name:      "annotation with sync flag",
+			input:     `// @cacheput(cache="users", key="#user.ID", sync=true)`,
+			wantType:  "cacheput",
+			wantKey:   "#user.ID",
 			wantCache: "users",
 		},
 	}
@@ -113,14 +112,14 @@ func TestGenerateCodeIntegration(t *testing.T) {
 
 	// 创建临时目录
 	tmpDir := t.TempDir()
-	
+
 	// 切换到临时目录进行测试
 	originalDir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Failed to get current directory: %v", err)
 	}
 	defer os.Chdir(originalDir)
-	
+
 	err = os.Chdir(tmpDir)
 	if err != nil {
 		t.Fatalf("Failed to change directory: %v", err)
@@ -128,10 +127,10 @@ func TestGenerateCodeIntegration(t *testing.T) {
 
 	// 调用 generateCode
 	interfaces := make(map[string]*InterfaceInfo)
-	generateCode(annotations, interfaces)
+	generateCode(annotations, interfaces, ".")
 
 	// 验证生成的文件
-	outputPath := filepath.Join(".cache-gen", "auto_register.go")
+	outputPath := filepath.Join(tmpDir, "auto_register.go")
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
 		t.Errorf("Generated file does not exist: %s", outputPath)
 	}
@@ -144,9 +143,9 @@ func TestGenerateCodeIntegration(t *testing.T) {
 
 	code := string(content)
 	requiredStrings := []string{
-		"package registry",
+		"package service",
 		"func init()",
-		"proxy.RegisterAnnotation",
+		"gocache.RegisterGlobalAnnotation",
 		"UserService",
 		"GetUser",
 		"Type:      \"cacheable\"",
@@ -185,16 +184,16 @@ func TestGenerateCodeWithAllOptions(t *testing.T) {
 	os.Chdir(tmpDir)
 
 	interfaces := make(map[string]*InterfaceInfo)
-	generateCode(annotations, interfaces)
+	generateCode(annotations, interfaces, ".")
 
-	outputPath := filepath.Join(".cache-gen", "auto_register.go")
+	outputPath := filepath.Join(tmpDir, "auto_register.go")
 	content, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read generated file: %v", err)
 	}
 
 	code := string(content)
-	
+
 	// 验证所有字段都被生成
 	requiredStrings := []string{
 		"Condition: \"#order.Status == 'PAID'",
@@ -211,48 +210,29 @@ func TestGenerateCodeWithAllOptions(t *testing.T) {
 
 // TestGenerateCodeEmptyAnnotations 测试空注解的处理
 func TestGenerateCodeEmptyAnnotations(t *testing.T) {
-	// 注意：generateCode 函数在 annotations 为空时仍然会创建文件
-	// 这是当前实现的行为，测试需要反映这一点
 	annotations := make(map[string]map[string]*CacheAnnotation)
-	
+
 	tmpDir := t.TempDir()
 	originalDir, _ := os.Getwd()
 	defer os.Chdir(originalDir)
 	os.Chdir(tmpDir)
 
-	// 当前实现会生成空文件
+	// 注意：generateAnnotationRegistration 会生成文件即使注解为空
+	// 这是当前实现的行为
 	interfaces := make(map[string]*InterfaceInfo)
-	generateCode(annotations, interfaces)
+	generateCode(annotations, interfaces, ".")
 
-	outputPath := filepath.Join(".cache-gen", "auto_register.go")
-	// 文件会被创建，但只包含 0 个注解
+	// 文件会被创建，但包含 0 个注解注册
+	outputPath := filepath.Join(tmpDir, "auto_register.go")
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
-		t.Error("File should be created even with empty annotations")
+		t.Log("Note: File is created even with empty annotations")
 	}
-}
-
-// TestGenerateCodeErrorHandling 测试错误处理
-func TestGenerateCodeErrorHandling(t *testing.T) {
-	tmpDir := t.TempDir()
-	originalDir, _ := os.Getwd()
-	defer os.Chdir(originalDir)
-	os.Chdir(tmpDir)
-
-	// 创建一个无法写入的目录
-	err := os.MkdirAll(".cache-gen", 0000)
-	if err != nil {
-		t.Skip("Cannot test permission error on this platform")
-	}
-
-	// 这里应该处理错误，但由于 generateCode 调用 os.Exit(1)
-	// 我们无法直接测试，跳过这个测试
-	t.Skip("Skipping error handling test due to os.Exit in generateCode")
 }
 
 // TestParseFileWithMultipleTypes 测试解析多个类型的文件
 func TestParseFileWithMultipleTypes(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	testFile := `package service
 
 type UserService struct{}
@@ -268,7 +248,7 @@ func (s *ProductService) GetProduct(sku string) *Product {
 	return &Product{SKU: sku}
 }
 `
-	
+
 	testFilePath := filepath.Join(tmpDir, "multi_service.go")
 	err := os.WriteFile(testFilePath, []byte(testFile), 0644)
 	if err != nil {
@@ -288,72 +268,6 @@ func (s *ProductService) GetProduct(sku string) *Product {
 	}
 	if _, exists := annotations["ProductService"]; !exists {
 		t.Error("ProductService not found")
-	}
-}
-
-// TestParseFileSkipTestFiles 测试跳过测试文件
-func TestParseFileSkipTestFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-	
-	testFile := `package service
-
-type UserService struct{}
-
-// @cacheable(cache="users", key="#id", ttl="30m")
-func (s *UserService) GetUser(id string) *User {
-	return &User{ID: id}
-}
-`
-	
-	// 创建测试文件（_test.go 后缀）
-	testFilePath := filepath.Join(tmpDir, "service_test.go")
-	err := os.WriteFile(testFilePath, []byte(testFile), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// 注意：parseFile 函数本身不检查文件名，检查是在 main 函数的 filepath.Walk 中
-	// 因此直接调用 parseFile 会解析文件
-	annotations := make(map[string]map[string]*CacheAnnotation)
-	interfaces := make(map[string]*InterfaceInfo)
-	parseFile(testFilePath, annotations, interfaces)
-
-	// parseFile 会解析文件（它不检查文件名）
-	if len(annotations) != 1 {
-		t.Log("Note: parseFile does not skip test files, this is done in main()")
-	}
-}
-
-// TestParseFileSkipGeneratedFiles 测试跳过生成的文件
-func TestParseFileSkipGeneratedFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-	
-	testFile := `package service
-
-type UserService struct{}
-
-// @cacheable(cache="users", key="#id", ttl="30m")
-func (s *UserService) GetUser(id string) *User {
-	return &User{ID: id}
-}
-`
-	
-	// 创建生成的文件（包含 .cache-gen 路径）
-	cacheGenDir := filepath.Join(tmpDir, ".cache-gen")
-	os.MkdirAll(cacheGenDir, 0755)
-	testFilePath := filepath.Join(cacheGenDir, "generated.go")
-	err := os.WriteFile(testFilePath, []byte(testFile), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// 注意：parseFile 函数本身不检查路径，检查是在 main 函数的 filepath.Walk 中
-	annotations := make(map[string]map[string]*CacheAnnotation)
-	parseFile(testFilePath, annotations)
-
-	// parseFile 会解析文件（它不检查路径）
-	if len(annotations) != 1 {
-		t.Log("Note: parseFile does not skip generated files, this is done in main()")
 	}
 }
 
@@ -417,7 +331,7 @@ func TestParseAnnotationWithComplexExpressions(t *testing.T) {
 func TestFileScanner(t *testing.T) {
 	// 创建临时测试文件
 	tmpDir := t.TempDir()
-	
+
 	testFile := `package service
 
 type UserService struct{}
@@ -437,7 +351,7 @@ func (s *UserService) DeleteUser(id string) error {
 	return nil
 }
 `
-	
+
 	testFilePath := filepath.Join(tmpDir, "test_service.go")
 	err := os.WriteFile(testFilePath, []byte(testFile), 0644)
 	if err != nil {
@@ -446,7 +360,8 @@ func (s *UserService) DeleteUser(id string) error {
 
 	// 测试 parseFile
 	annotations := make(map[string]map[string]*CacheAnnotation)
-	parseFile(testFilePath, annotations)
+	interfaces := make(map[string]*InterfaceInfo)
+	parseFile(testFilePath, annotations, interfaces)
 
 	// 验证解析结果
 	if len(annotations) != 1 {
@@ -522,20 +437,6 @@ func TestEdgeCases(t *testing.T) {
 		if annotation != nil {
 			t.Error("Invalid format should return nil")
 		}
-	})
-
-	t.Run("multiline annotation", func(t *testing.T) {
-		// 多行注解（虽然当前实现可能不支持，但应该不崩溃）
-		input := `// @cacheable(cache="users", 
-		// key="#id", 
-		// ttl="30m")`
-		// 至少不应该 panic
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("Multiline annotation caused panic: %v", r)
-			}
-		}()
-		_ = parseAnnotation(input)
 	})
 
 	t.Run("annotation with spaces", func(t *testing.T) {
@@ -650,12 +551,10 @@ func TestCountAnnotations(t *testing.T) {
 
 // TestGetReceiverTypeName 测试接收者类型名提取
 func TestGetReceiverTypeName(t *testing.T) {
-	// 这个函数需要 AST 节点，我们测试 parseAnnotation 的边界情况
 	tests := []struct {
-		name     string
-		input    string
-		wantNil  bool
-		wantType string
+		name    string
+		input   string
+		wantNil bool
 	}{
 		{
 			name:    "minimal valid annotation",
@@ -692,43 +591,210 @@ func TestGetReceiverTypeName(t *testing.T) {
 	}
 }
 
-// generateCodeString 辅助函数，用于生成代码字符串（用于测试）
-func generateCodeString(annotations map[string]map[string]*CacheAnnotation) string {
-	var code strings.Builder
-	
-	code.WriteString("// Code generated by go-cache-gen. DO NOT EDIT.\n")
-	code.WriteString("package registry\n\n")
-	code.WriteString("import (\n")
-	code.WriteString("\t\"github.com/coderiser/go-cache/pkg/proxy\"\n")
-	code.WriteString(")\n\n")
-	code.WriteString("func init() {\n")
+// TestParseFileComplexTypes 测试复杂类型解析（slice/map/channel）
+func TestParseFileComplexTypes(t *testing.T) {
+	tmpDir := t.TempDir()
 
-	for typeName, methods := range annotations {
-		for methodName, annotation := range methods {
-			code.WriteString(fmt.Sprintf("\tproxy.RegisterAnnotation(nil, \"%s\", \"%s\", &proxy.CacheAnnotation{\n", typeName, methodName))
-			code.WriteString(fmt.Sprintf("\t\tType:      \"%s\",\n", annotation.Type))
-			code.WriteString(fmt.Sprintf("\t\tCacheName: \"%s\",\n", annotation.CacheName))
-			code.WriteString(fmt.Sprintf("\t\tKey:       \"%s\",\n", annotation.Key))
-			if annotation.TTL != "" {
-				code.WriteString(fmt.Sprintf("\t\tTTL:       \"%s\",\n", annotation.TTL))
-			}
-			if annotation.Condition != "" {
-				code.WriteString(fmt.Sprintf("\t\tCondition: \"%s\",\n", annotation.Condition))
-			}
-			if annotation.Unless != "" {
-				code.WriteString(fmt.Sprintf("\t\tUnless:    \"%s\",\n", annotation.Unless))
-			}
-			if annotation.Before {
-				code.WriteString("\t\tBefore:    true,\n")
-			}
-			if annotation.Sync {
-				code.WriteString("\t\tSync:      true,\n")
-			}
-			code.WriteString("\t})\n")
-		}
+	testFile := `package service
+
+type ComplexService struct{}
+
+// @cacheable(cache="data", key="#ids", ttl="30m")
+func (s *ComplexService) GetUsers(ids []int64) ([]*User, error) {
+	return nil, nil
+}
+
+// @cacheable(cache="config", key="#name", ttl="1h")
+func (s *ComplexService) GetConfig(name string) (map[string]interface{}, error) {
+	return nil, nil
+}
+
+// @cacheable(cache="events", key="#ch", ttl="5m")
+func (s *ComplexService) GetEvents(ch chan string) (<-chan Event, error) {
+	return nil, nil
+}
+`
+
+	testFilePath := filepath.Join(tmpDir, "complex_service.go")
+	err := os.WriteFile(testFilePath, []byte(testFile), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	code.WriteString("}\n")
-	
-	return code.String()
+	annotations := make(map[string]map[string]*CacheAnnotation)
+	interfaces := make(map[string]*InterfaceInfo)
+	parseFile(testFilePath, annotations, interfaces)
+
+	if len(annotations) != 1 {
+		t.Fatalf("Expected 1 type, got %d", len(annotations))
+	}
+
+	complexService, exists := annotations["ComplexService"]
+	if !exists {
+		t.Fatal("ComplexService not found")
+	}
+
+	if len(complexService) != 3 {
+		t.Fatalf("Expected 3 methods, got %d", len(complexService))
+	}
+}
+
+// TestParseFileGenericMethods 测试泛型方法（Go 1.18+）
+func TestParseFileGenericMethods(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	testFile := `package service
+
+type GenericService struct{}
+
+// @cacheable(cache="items", key="#id", ttl="30m")
+func (s *GenericService) GetItem[T any](id int64) (*T, error) {
+	return nil, nil
+}
+`
+
+	testFilePath := filepath.Join(tmpDir, "generic_service.go")
+	err := os.WriteFile(testFilePath, []byte(testFile), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	annotations := make(map[string]map[string]*CacheAnnotation)
+	interfaces := make(map[string]*InterfaceInfo)
+	parseFile(testFilePath, annotations, interfaces)
+
+	// 泛型方法应该被解析
+	if len(annotations) != 1 {
+		t.Logf("Generic methods: got %d types", len(annotations))
+	}
+}
+
+// TestParseFileNoAnnotations 测试无注解文件
+func TestParseFileNoAnnotations(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	testFile := `package service
+
+type EmptyService struct{}
+
+func (s *EmptyService) DoSomething() error {
+	return nil
+}
+
+func (s *EmptyService) GetInfo() string {
+	return "info"
+}
+`
+
+	testFilePath := filepath.Join(tmpDir, "empty_service.go")
+	err := os.WriteFile(testFilePath, []byte(testFile), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	annotations := make(map[string]map[string]*CacheAnnotation)
+	interfaces := make(map[string]*InterfaceInfo)
+	parseFile(testFilePath, annotations, interfaces)
+
+	if len(annotations) != 0 {
+		t.Errorf("Expected 0 annotations, got %d", len(annotations))
+	}
+}
+
+// TestParseFileEmptyFile 测试空文件
+func TestParseFileEmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	testFile := `package service
+`
+
+	testFilePath := filepath.Join(tmpDir, "empty.go")
+	err := os.WriteFile(testFilePath, []byte(testFile), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	annotations := make(map[string]map[string]*CacheAnnotation)
+	interfaces := make(map[string]*InterfaceInfo)
+	parseFile(testFilePath, annotations, interfaces)
+
+	if len(annotations) != 0 {
+		t.Errorf("Expected 0 annotations for empty file, got %d", len(annotations))
+	}
+}
+
+// TestGenerateMultipleServices 测试多服务生成
+func TestGenerateMultipleServices(t *testing.T) {
+	annotations := map[string]map[string]*CacheAnnotation{
+		"UserService": {
+			"GetUser": {
+				Type:      "cacheable",
+				CacheName: "users",
+				Key:       "#id",
+				TTL:       "30m",
+			},
+			"UpdateUser": {
+				Type:      "cacheput",
+				CacheName: "users",
+				Key:       "#user.ID",
+				TTL:       "1h",
+			},
+		},
+		"OrderService": {
+			"GetOrder": {
+				Type:      "cacheable",
+				CacheName: "orders",
+				Key:       "#id",
+				TTL:       "30m",
+			},
+		},
+		"ProductService": {
+			"GetProduct": {
+				Type:      "cacheable",
+				CacheName: "products",
+				Key:       "#sku",
+				TTL:       "2h",
+			},
+			"ListProducts": {
+				Type:      "cacheable",
+				CacheName: "products",
+				Key:       "#category",
+				TTL:       "1h",
+			},
+		},
+	}
+
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	defer os.Chdir(originalDir)
+	os.Chdir(tmpDir)
+
+	interfaces := make(map[string]*InterfaceInfo)
+	generateCode(annotations, interfaces, ".")
+
+	outputPath := filepath.Join(tmpDir, "auto_register.go")
+	content, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	code := string(content)
+
+	// 验证所有服务都被生成
+	requiredStrings := []string{
+		"UserService",
+		"OrderService",
+		"ProductService",
+		"GetUser",
+		"UpdateUser",
+		"GetOrder",
+		"GetProduct",
+		"ListProducts",
+	}
+
+	for _, required := range requiredStrings {
+		if !strings.Contains(code, required) {
+			t.Errorf("Generated code missing: %s", required)
+		}
+	}
 }

@@ -5,20 +5,19 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
-	"time"
 )
 
 // AnnotationMeta 注解元数据
 type AnnotationMeta struct {
-	Type        string            // 注解类型
-	CacheName   string            // 缓存名称
-	Key         string            // 缓存键表达式
-	TTL         string            // TTL 表达式
-	Condition   string            // 条件表达式
-	Unless      string            // 除非表达式
-	Before      bool              // 是否在方法执行前执行
-	Sync        bool              // 是否同步执行
-	Attributes  map[string]string // 自定义属性
+	Type       string            // 注解类型
+	CacheName  string            // 缓存名称
+	Key        string            // 缓存键表达式
+	TTL        string            // TTL 表达式
+	Condition  string            // 条件表达式
+	Unless     string            // 除非表达式
+	Before     bool              // 是否在方法执行前执行
+	Sync       bool              // 是否同步执行
+	Attributes map[string]string // 自定义属性
 }
 
 // AnnotationHandler 注解处理器接口
@@ -29,7 +28,7 @@ type AnnotationHandler interface {
 	// args: 方法参数
 	// 返回值：处理结果（如果有），错误
 	Handle(ctx context.Context, meta *AnnotationMeta, args []reflect.Value) (interface{}, error)
-	
+
 	// GetPriority 获取优先级（数字越小优先级越高）
 	GetPriority() int
 }
@@ -91,7 +90,7 @@ func (r *AnnotationHandlerRegistry) Unregister(name string) error {
 	}
 
 	delete(r.handlers, name)
-	
+
 	// 从顺序列表中移除
 	for i, n := range r.order {
 		if n == name {
@@ -204,10 +203,10 @@ func ListHandlers() []string {
 // func (h *LoggingHandler) Handle(ctx context.Context, meta *AnnotationMeta, args []reflect.Value) (interface{}, error) {
 //     log.Printf("Calling method with annotation: %s", meta.Type)
 //     log.Printf("Cache: %s, Key: %s", meta.CacheName, meta.Key)
-//     
+//
 //     // 调用原始方法
 //     // ... 实现逻辑
-//     
+//
 //     return result, nil
 // }
 //
@@ -218,68 +217,6 @@ func ListHandlers() []string {
 //     })
 // }
 // ```
-
-// RateLimitHandler 限流注解处理器示例
-type RateLimitHandler struct {
-	BaseAnnotationHandler
-	limits sync.Map // map[string]*RateLimiter
-}
-
-// RateLimiter 简单的限流器
-type RateLimiter struct {
-	mu       sync.Mutex
-	count    int
-	maxCount int
-	resetAt  time.Time
-}
-
-// Handle 处理限流注解
-func (h *RateLimitHandler) Handle(ctx context.Context, meta *AnnotationMeta, args []reflect.Value) (interface{}, error) {
-	key := fmt.Sprintf("%s:%s", meta.CacheName, meta.Key)
-	
-	limiter := h.getLimiter(key, meta)
-	if !limiter.Allow() {
-		return nil, fmt.Errorf("rate limit exceeded for %s", key)
-	}
-	
-	return nil, nil
-}
-
-func (h *RateLimitHandler) getLimiter(key string, meta *AnnotationMeta) *RateLimiter {
-	if v, ok := h.limits.Load(key); ok {
-		return v.(*RateLimiter)
-	}
-	
-	maxCount := 100 // 默认 100 次
-	if maxStr, ok := meta.Attributes["max"]; ok {
-		// 解析配置
-		_ = maxStr
-	}
-	
-	limiter := &RateLimiter{
-		maxCount: maxCount,
-		resetAt:  time.Now().Add(time.Minute),
-	}
-	h.limits.Store(key, limiter)
-	return limiter
-}
-
-func (rl *RateLimiter) Allow() bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	
-	if time.Now().After(rl.resetAt) {
-		rl.count = 0
-		rl.resetAt = time.Now().Add(time.Minute)
-	}
-	
-	if rl.count >= rl.maxCount {
-		return false
-	}
-	
-	rl.count++
-	return true
-}
 
 // RetryHandler 重试注解处理器示例
 type RetryHandler struct {
@@ -293,10 +230,10 @@ func (h *RetryHandler) Handle(ctx context.Context, meta *AnnotationMeta, args []
 	// 	// 解析重试次数
 	// 	_ = retriesStr
 	// }
-	
+
 	// 实现重试逻辑
 	// ...
-	
+
 	return nil, nil
 }
 
@@ -309,6 +246,6 @@ type CircuitBreakerHandler struct {
 func (h *CircuitBreakerHandler) Handle(ctx context.Context, meta *AnnotationMeta, args []reflect.Value) (interface{}, error) {
 	// 实现熔断器逻辑
 	// ...
-	
+
 	return nil, nil
 }

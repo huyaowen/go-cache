@@ -265,15 +265,6 @@ func (w *CacheWarmer) Clear() {
 //     },
 // })
 //
-// // 执行预热
-// ctx := context.Background()
-// if err := warmer.WarmUpConcurrent(ctx, nil, 4); err != nil {
-//     log.Printf("WarmUp failed: %v", err)
-// }
-//
-// // 查看统计
-// stats := warmer.GetStats()
-// fmt.Printf("Warmed up %d/%d entries in %v\n", stats.Success, stats.Total, stats.Duration)
 // ```
 
 // WarmUpBuilder 预热器构建器（流式 API）

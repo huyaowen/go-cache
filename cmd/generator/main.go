@@ -2,13 +2,16 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -58,6 +61,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	scanDir := os.Args[1]  // 使用第一个目录推导包路径
 	dirs := os.Args[1:]
 	fmt.Printf("🔍 Scanning %d directory/directories...\n", len(dirs))
 
@@ -93,8 +97,12 @@ func main() {
 		return
 	}
 
-	generateCode(allAnnotations, allInterfaces)
+	generateCode(allAnnotations, allInterfaces, scanDir)
 	fmt.Println("✅ Code generation complete!")
+	fmt.Println("\n📖 Next steps:")
+	fmt.Println("   1. Import your service: import \"your-module/service\"")
+	fmt.Println("   2. Use directly: svc := service.NewUserService()")
+	fmt.Println("   3. (Optional) Configure cache manager: see README.md")
 }
 
 func parseFile(path string, annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo) {
@@ -209,14 +217,20 @@ func parseMethodType(field *ast.Field, funcType *ast.FuncType, fset *token.FileS
 	if funcType.Params != nil {
 		for _, param := range funcType.Params.List {
 			paramType := getTypeString(param.Type, fset)
-			paramName := "_"
+			// 处理多参数名情况（如 name, email string）
 			if len(param.Names) > 0 {
-				paramName = param.Names[0].Name
+				for _, name := range param.Names {
+					methodInfo.Params = append(methodInfo.Params, ParamInfo{
+						Name: name.Name,
+						Type: paramType,
+					})
+				}
+			} else {
+				methodInfo.Params = append(methodInfo.Params, ParamInfo{
+					Name: "_",
+					Type: paramType,
+				})
 			}
-			methodInfo.Params = append(methodInfo.Params, ParamInfo{
-				Name: paramName,
-				Type: paramType,
-			})
 		}
 	}
 	
@@ -326,23 +340,60 @@ func parseAnnotation(comment string) *CacheAnnotation {
 	return annotation
 }
 
-func generateCode(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo) {
+func generateCode(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo, scanDir string) {
 	// 1. 生成注解注册代码
-	generateAnnotationRegistration(annotations)
+	generateAnnotationRegistration(annotations, scanDir)
 	
 	// 2. 生成接口包装器代码
-	generateInterfaceWrappers(annotations, interfaces)
+	generateInterfaceWrappers(annotations, interfaces, scanDir)
+}
+
+// getPackageName 从目录中获取包名
+func getPackageName(scanDir string) string {
+	// 尝试从当前目录的 Go 文件推断包名
+	files, err := filepath.Glob(filepath.Join(scanDir, "*.go"))
+	if err != nil {
+		return "service" // 默认包名
+	}
+	
+	// 读取第一个非生成文件的包名
+	for _, file := range files {
+		// 跳过生成的文件
+		if strings.Contains(file, "auto_register") || 
+		   strings.Contains(file, "_cached.go") ||
+		   strings.Contains(file, "generated_") {
+			continue
+		}
+		
+		// 读取文件解析包名
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		
+		for _, line := range strings.Split(string(content), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "package ") && len(line) > 8 {
+				return strings.TrimSpace(line[8:])
+			}
+		}
+	}
+	
+	return "service" // 默认包名
 }
 
 // generateAnnotationRegistration 生成注解注册代码
-func generateAnnotationRegistration(annotations map[string]map[string]*CacheAnnotation) {
+func generateAnnotationRegistration(annotations map[string]map[string]*CacheAnnotation, scanDir string) {
 	// 创建输出目录
-	outputDir := ".cache-gen"
+	outputDir := "."
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		fmt.Printf("❌ Error creating output directory: %v\n", err)
 		os.Exit(1)
 	}
 
+	// 获取当前目录的包名
+	packageName := getPackageName(scanDir)
+	
 	total := countAnnotations(annotations)
 	timestamp := time.Now().Format(time.RFC3339)
 
@@ -350,23 +401,22 @@ func generateAnnotationRegistration(annotations map[string]map[string]*CacheAnno
 // Generated at: %s
 // Total annotations: %d
 
-package registry
+package %s
 
 import (
 	"github.com/coderiser/go-cache/pkg/proxy"
+	gocache "github.com/coderiser/go-cache/pkg/cache"
 )
 
 func init() {
-`, timestamp, total)
+`, timestamp, total, packageName)
 
 	for typeName, methods := range annotations {
 		for methodName, annotation := range methods {
-			code += fmt.Sprintf("\tproxy.RegisterAnnotation(nil, \"%s\", \"%s\", &proxy.CacheAnnotation{\n", typeName, methodName)
+			code += fmt.Sprintf("\tgocache.RegisterGlobalAnnotation(\"%s\", \"%s\", &proxy.CacheAnnotation{\n", typeName, methodName)
 			code += fmt.Sprintf("\t\tType:      \"%s\",\n", annotation.Type)
 			code += fmt.Sprintf("\t\tCacheName: \"%s\",\n", annotation.CacheName)
-			// Remove # prefix from key (expr library uses # for special syntax)
-			key := strings.TrimPrefix(annotation.Key, "#")
-			code += fmt.Sprintf("\t\tKey:       \"%s\",\n", key)
+			code += fmt.Sprintf("\t\tKey:       \"%s\",\n", annotation.Key)
 			if annotation.TTL != "" {
 				code += fmt.Sprintf("\t\tTTL:       \"%s\",\n", annotation.TTL)
 			}
@@ -389,7 +439,11 @@ func init() {
 	code += "}\n"
 
 	outputPath := filepath.Join(outputDir, "auto_register.go")
-	err := os.WriteFile(outputPath, []byte(code), 0644)
+	
+	// 格式化代码
+	formattedCode := formatCode(code)
+	
+	err := os.WriteFile(outputPath, []byte(formattedCode), 0644)
 	if err != nil {
 		fmt.Printf("❌ Error writing generated code: %v\n", err)
 		os.Exit(1)
@@ -408,8 +462,11 @@ func init() {
 	}
 }
 
-// generateInterfaceWrappers 生成接口包装器代码
-func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo) {
+// generateInterfaceWrappers 生成接口包装器代码（方案 G：Beego 融合版）
+func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotation, interfaces map[string]*InterfaceInfo, scanDir string) {
+	// 获取当前目录的包名（用于生成的代码）
+	packageName := getPackageName(scanDir)
+	
 	// 找出有注解的接口，为它们生成包装器
 	for interfaceName, interfaceInfo := range interfaces {
 		// 检查是否有对应的实现类型有注解
@@ -434,61 +491,194 @@ func generateInterfaceWrappers(annotations map[string]map[string]*CacheAnnotatio
 			continue
 		}
 		
-		// 生成包装器代码
-		generateWrapperForInterface(interfaceName, interfaceInfo, expectedImpl)
+		// 生成包装器代码（方案 G）
+		generateCachedServiceForInterface(interfaceName, interfaceInfo, expectedImpl, annotations[expectedImpl], scanDir, packageName)
 	}
 }
 
-// generateWrapperForInterface 为单个接口生成包装器
-func generateWrapperForInterface(interfaceName string, interfaceInfo *InterfaceInfo, implName string) {
-	// implName 是实现类型名（如 userService）
+// getModulePath 从 go.mod 文件读取模块路径
+func getModulePath(scanDir string) string {
+	// 尝试在 scanDir 中查找 go.mod
+	goModPath := filepath.Join(scanDir, "go.mod")
+	
+	// 如果 scanDir 中没有，尝试父目录
+	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+		parentDir := filepath.Dir(scanDir)
+		goModPath = filepath.Join(parentDir, "go.mod")
+	}
+	
+	// 读取 go.mod
+	content, err := os.ReadFile(goModPath)
+	if err != nil {
+		// 回退到旧逻辑
+		return ""
+	}
+	
+	// 解析 module 行
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module"))
+		}
+	}
+	
+	return ""
+}
+
+// getModelImportPath 推导 model 包的导入路径
+// 通过分析现有代码中的 import 语句来确定正确的导入路径
+func getModelImportPath(scanDir string, method *MethodInfo) string {
+	// 优先从方法参数和返回值的类型中提取完整的导入路径
+	for _, param := range method.Params {
+		// 如果参数类型包含包名（如 model.User），提取导入路径
+		if idx := strings.Index(param.Type, "."); idx > 0 {
+			pkgName := param.Type[:idx]
+			// 从当前目录的 Go 文件中查找该包的完整导入路径
+			if importPath := findImportPath(scanDir, pkgName); importPath != "" {
+				return importPath
+			}
+		}
+	}
+	
+	for _, result := range method.Results {
+		if idx := strings.Index(result.Type, "."); idx > 0 {
+			pkgName := result.Type[:idx]
+			if importPath := findImportPath(scanDir, pkgName); importPath != "" {
+				return importPath
+			}
+		}
+	}
+	
+	// 如果无法从类型推断，使用默认逻辑
+	modulePath := getModulePath(scanDir)
+	if modulePath != "" {
+		// 默认假设 model 在同级目录
+		return fmt.Sprintf("%s/model", modulePath)
+	}
+	
+	// 回退
+	return "model"
+}
+
+// findImportPath 从当前目录的 Go 文件中查找指定包名的完整导入路径
+func findImportPath(scanDir string, pkgName string) string {
+	// 读取当前目录的所有 Go 文件
+	files, err := filepath.Glob(filepath.Join(scanDir, "*.go"))
+	if err != nil {
+		return ""
+	}
+	
+	for _, file := range files {
+		// 跳过生成的文件
+		if strings.Contains(file, "auto_register") || 
+		   strings.Contains(file, "_cached.go") ||
+		   strings.Contains(file, "generated_") {
+			continue
+		}
+		
+		// 解析 import 语句
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		
+		// 查找 import 块（多行格式）
+		importStart := bytes.Index(content, []byte("import ("))
+		if importStart != -1 {
+			importEnd := bytes.Index(content[importStart:], []byte(")\n"))
+			if importEnd != -1 {
+				importBlock := content[importStart : importStart+importEnd]
+				
+				// 查找包名对应的导入路径
+				lines := bytes.Split(importBlock, []byte("\n"))
+				for _, line := range lines {
+					line = bytes.TrimSpace(line)
+					// 提取导入路径
+					start := bytes.Index(line, []byte("\""))
+					end := bytes.LastIndex(line, []byte("\""))
+					if start != -1 && end != -1 && end > start {
+						importPath := string(line[start+1 : end])
+						// 检查导入路径的包名是否匹配
+						// 如："github.com/xxx/model" 的包名是 "model"
+						baseName := filepath.Base(importPath)
+						if baseName == pkgName {
+							return importPath
+						}
+					}
+				}
+			}
+		}
+		
+		// 查找单行 import 格式：import "path"
+		if importStart == -1 {
+			importStart = bytes.Index(content, []byte("import \""))
+			if importStart != -1 {
+				start := importStart + len("import \"")
+				end := bytes.Index(content[start:], []byte("\""))
+				if end != -1 {
+					importPath := string(content[start : start+end])
+					// 检查是否匹配包名
+					if strings.HasSuffix(importPath, "/"+pkgName) || importPath == pkgName {
+						return importPath
+					}
+				}
+			}
+		}
+	}
+	
+	return ""
+}
+
+// generateCachedServiceForInterface 为单个接口生成缓存服务（方案 G）
+func generateCachedServiceForInterface(interfaceName string, interfaceInfo *InterfaceInfo, implName string, typeAnnotations map[string]*CacheAnnotation, scanDir string, packageName string) {
 	// serviceName 是大写开头的服务名（用于类型名，如 UserService）
 	serviceName := strings.TrimSuffix(interfaceName, "Interface")
-	// decoratedTypeName 是装饰器类型名（首字母小写，因为它是 struct 类型）
-	decoratedTypeName := "decorated" + serviceName
-	// newFuncName 是构造函数名（New + 大写开头）
-	newFuncName := "NewDecorated" + serviceName
+	// rawServiceFuncName 是原始服务构造函数名（如 NewProductService）
+	// 从 implName 推导：productService -> NewProductService
+	rawServiceFuncName := "New" + strings.ToUpper(string(implName[0])) + implName[1:]
 	
-	// 收集需要的导入
-	importsMap := make(map[string]bool)
-	importsMap["fmt"] = true
-	importsMap["github.com/coderiser/go-cache/pkg/proxy"] = true
+	// 收集需要的导入 (key: 包路径，value: 别名)
+	importsMap := make(map[string]string)
+	importsMap["github.com/coderiser/go-cache/pkg/core"] = ""
+	// 使用别名避免包名冲突
+	importsMap["github.com/coderiser/go-cache/pkg/cache"] = "gocache"
 	
-	// 检查是否需要 model 包导入
+	// 为每个方法收集需要的导入（分析方法中实际使用的类型）
 	for _, method := range interfaceInfo.Methods {
 		for _, param := range method.Params {
-			if strings.Contains(param.Type, "model.") {
-				importsMap["github.com/coderiser/go-cache/examples/gin-web/model"] = true
+			if idx := strings.Index(param.Type, "."); idx > 0 {
+				pkgName := strings.TrimLeft(param.Type[:idx], "*")
+				importPath := findImportPath(scanDir, pkgName)
+				if importPath != "" {
+					importsMap[importPath] = ""
+				}
 			}
 		}
 		for _, result := range method.Results {
-			if strings.Contains(result.Type, "model.") {
-				importsMap["github.com/coderiser/go-cache/examples/gin-web/model"] = true
+			if idx := strings.Index(result.Type, "."); idx > 0 {
+				pkgName := strings.TrimLeft(result.Type[:idx], "*")
+				importPath := findImportPath(scanDir, pkgName)
+				if importPath != "" {
+					importsMap[importPath] = ""
+				}
 			}
 		}
 	}
 	
-	// 构建导入语句
-	var imports []string
-	for imp := range importsMap {
-		imports = append(imports, fmt.Sprintf("\t\"%s\"", imp))
-	}
+	// 构建导入语句 (支持别名，排序)
+	imports := sortImports(importsMap)
 	importsStr := strings.Join(imports, "\n")
 	
 	timestamp := time.Now().Format(time.RFC3339)
 	
-	// 输出到 .cache-gen 目录
-	outputDir := ".cache-gen"
+	// 输出到当前目录
+	outputDir := "."
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		fmt.Printf("❌ Error creating output directory: %v\n", err)
 		return
 	}
 	
-	// 文件名：<type>_decorated.go（如 user_decorated.go）
-	// 从接口名推导：UserServiceInterface -> user
-	// 1. 去掉 Interface 后缀：UserServiceInterface -> UserService
-	// 2. 首字母小写：UserService -> userService
-	// 3. 取第一个词（按大写字母分割）：userService -> user
+	// 文件名：<type>_cached.go（如 product_cached.go）
 	fileNameBase := strings.TrimSuffix(interfaceName, "Interface")
 	fileNameBase = strings.ToLower(string(fileNameBase[0])) + fileNameBase[1:]
 	// 按大写字母分割，取第一个部分
@@ -498,47 +688,75 @@ func generateWrapperForInterface(interfaceName string, interfaceInfo *InterfaceI
 			break
 		}
 	}
-	outputFileName := fileNameBase + "_decorated.go"
+	outputFileName := fileNameBase + "_cached.go"
 	outputPath := filepath.Join(outputDir, outputFileName)
+	
+	// 生成 NewXxxService 函数
+	newServiceFuncs := fmt.Sprintf(`
+// New%[1]s 创建带缓存的%[1]s 实例（使用全局 Manager）
+func New%[1]s() %[2]s {
+	return New%[1]sWithManager(gocache.GetGlobalManager())
+}
+
+// New%[1]sWithManager 创建带缓存的%[1]s 实例（使用指定 Manager）
+func New%[1]sWithManager(manager core.CacheManager) %[2]s {
+	raw := %[3]sRaw()
+	return &cached%[4]s{
+		decorated: raw,
+		manager:   manager,
+	}
+}
+`, serviceName, interfaceName, rawServiceFuncName, serviceName)
 	
 	code := fmt.Sprintf(`// Code generated by go-cache-gen. DO NOT EDIT.
 // Generated at: %s
 // Interface: %s
 
-package service
+package %s
 
 import (
-%s
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/coderiser/go-cache/pkg/core"
+	gocache "github.com/coderiser/go-cache/pkg/cache"
+	%s
 )
 
-// %s 自动生成的装饰器包装器
-// 实现 %s 接口，通过代理调用方法
-type %s struct {
-	decorated *proxy.DecoratedService[*%s]
+// cached%s 带缓存的包装实现
+// 实现 %s 接口
+type cached%s struct {
+	decorated %s
+	manager   core.CacheManager
 }
 
-// %s 创建装饰后的服务（自动生成）
-func %s(decorated *proxy.DecoratedService[*%s]) *%s {
-	return &%s{decorated: decorated}
-}
-
-`, timestamp, interfaceName, importsStr, decoratedTypeName, interfaceName, decoratedTypeName, implName, newFuncName, newFuncName, implName, decoratedTypeName, decoratedTypeName)
+%s
+`, timestamp, interfaceName, packageName, importsStr, serviceName, interfaceName, serviceName, interfaceName, newServiceFuncs)
 
 	// 生成每个接口方法的实现
 	for _, method := range interfaceInfo.Methods {
-		code += generateMethodImplementation(method, decoratedTypeName, serviceName)
+		ann := typeAnnotations[method.Name]
+		if ann != nil {
+			code += generateCachedMethodWithAnnotation(method, ann, "cached"+serviceName)
+		} else {
+			code += generateSimplePassthroughMethod(method, "cached"+serviceName)
+		}
 	}
 
 	// 添加接口实现检查
-	code += fmt.Sprintf("\n// 确保实现接口\nvar _ %s = (*%s)(nil)\n", interfaceName, decoratedTypeName)
+	code += fmt.Sprintf("\n// 确保实现接口\nvar _ %s = (*cached%s)(nil)\n", interfaceName, serviceName)
+
+	// 格式化代码
+	formattedCode := formatCode(code)
 
 	// 写入文件
-	if err := os.WriteFile(outputPath, []byte(code), 0644); err != nil {
+	if err := os.WriteFile(outputPath, []byte(formattedCode), 0644); err != nil {
 		fmt.Printf("❌ Error writing wrapper code: %v\n", err)
 		return
 	}
 
-	fmt.Printf("📝 Generated wrapper: %s (for %s)\n", outputPath, interfaceName)
+	fmt.Printf("📝 Generated cached service: %s (for %s)\n", outputPath, interfaceName)
 }
 
 // generateMethodImplementation 生成单个方法的实现
@@ -652,10 +870,329 @@ func generateMethodImplementation(method *MethodInfo, decoratedTypeName, service
 	return code
 }
 
+// generateCachedMethodWithAnnotation 生成带缓存注解的方法实现
+func generateCachedMethodWithAnnotation(method *MethodInfo, ann *CacheAnnotation, cachedTypeName string) string {
+	switch ann.Type {
+	case "cacheable":
+		return generateCacheableMethod(method, ann, cachedTypeName)
+	case "cacheput":
+		return generateCachePutMethod(method, ann, cachedTypeName)
+	case "cacheevict":
+		return generateCacheEvictMethod(method, ann, cachedTypeName)
+	default:
+		return generateSimplePassthroughMethod(method, cachedTypeName)
+	}
+}
+
+// generateCacheableMethod 生成 @cacheable 方法实现
+func generateCacheableMethod(method *MethodInfo, ann *CacheAnnotation, cachedTypeName string) string {
+	params := buildParamList(method.Params)
+	argNames := buildArgNames(method.Params)
+	resultTypes := buildResultTypes(method.Results)
+	keyExpr := buildKeyExpression(method.Params, method.Results, ann.Key)
+	
+	code := fmt.Sprintf(`
+// %s 带缓存的实现（@cacheable）
+func (c *%s) %s(%s) %s {
+	// 1. 获取缓存
+	cache, err := c.manager.GetCache("%s")
+	if err != nil {
+		return c.decorated.%s(%s)
+	}
+	
+	// 2. 生成缓存 Key
+	key := fmt.Sprintf("%s:%%v", %s)
+	
+	// 3. 查询缓存
+	if val, found, _ := cache.Get(context.Background(), key); found {
+		return val.(%s), nil
+	}
+	
+	// 4. 执行原始方法
+	result, err := c.decorated.%s(%s)
+	if err != nil {
+		return nil, err
+	}
+	
+	// 5. 写入缓存
+	ttl, _ := time.ParseDuration("%s")
+	_ = cache.Set(context.Background(), key, result, ttl)
+	
+	return result, nil
+}
+`, method.Name, cachedTypeName, method.Name, params, resultTypes,
+		ann.CacheName, method.Name, argNames,
+		ann.CacheName, keyExpr,
+		method.ResultType,
+		method.Name, argNames,
+		ann.TTL)
+	
+	return code
+}
+
+// generateCachePutMethod 生成 @cacheput 方法实现
+func generateCachePutMethod(method *MethodInfo, ann *CacheAnnotation, cachedTypeName string) string {
+	params := buildParamList(method.Params)
+	argNames := buildArgNames(method.Params)
+	resultTypes := buildResultTypes(method.Results)
+	keyExpr := buildKeyExpression(method.Params, method.Results, ann.Key)
+	
+	code := fmt.Sprintf(`
+// %s 带缓存更新的实现（@cacheput）
+func (c *%s) %s(%s) %s {
+	// 1. 执行原始方法
+	result, err := c.decorated.%s(%s)
+	if err != nil {
+		return nil, err
+	}
+	
+	// 2. 更新缓存
+	cache, err := c.manager.GetCache("%s")
+	if err != nil {
+		return result, nil
+	}
+	
+	// 3. 生成缓存 Key
+	key := fmt.Sprintf("%s:%%v", %s)
+	
+	// 4. 写入缓存
+	ttl, _ := time.ParseDuration("%s")
+	_ = cache.Set(context.Background(), key, result, ttl)
+	
+	return result, nil
+}
+`, method.Name, cachedTypeName, method.Name, params, resultTypes,
+		method.Name, argNames,
+		ann.CacheName,
+		ann.CacheName, keyExpr,
+		ann.TTL)
+	
+	return code
+}
+
+// generateCacheEvictMethod 生成 @cacheevict 方法实现
+func generateCacheEvictMethod(method *MethodInfo, ann *CacheAnnotation, cachedTypeName string) string {
+	params := buildParamList(method.Params)
+	argNames := buildArgNames(method.Params)
+	resultTypes := buildResultTypes(method.Results)
+	keyExpr := buildKeyExpression(method.Params, method.Results, ann.Key)
+	
+	// 检查是否只有 error 返回值
+	hasOnlyErrorReturn := method.HasError && method.ResultType == ""
+	
+	if hasOnlyErrorReturn {
+		code := fmt.Sprintf(`
+// %s 带缓存清除的实现（@cacheevict）
+func (c *%s) %s(%s) %s {
+	// 1. 执行原始方法
+	err := c.decorated.%s(%s)
+	if err != nil {
+		return err
+	}
+	
+	// 2. 清除缓存
+	cache, _ := c.manager.GetCache("%s")
+	if cache == nil {
+		return nil
+	}
+	
+	// 3. 生成缓存 Key
+	key := fmt.Sprintf("%s:%%v", %s)
+	
+	// 4. 删除缓存
+	_ = cache.Delete(context.Background(), key)
+	
+	return nil
+}
+`, method.Name, cachedTypeName, method.Name, params, resultTypes,
+			method.Name, argNames,
+			ann.CacheName,
+			ann.CacheName, keyExpr)
+		return code
+	}
+	
+	code := fmt.Sprintf(`
+// %s 带缓存清除的实现（@cacheevict）
+func (c *%s) %s(%s) %s {
+	// 1. 执行原始方法
+	result, err := c.decorated.%s(%s)
+	if err != nil {
+		return result, err
+	}
+	
+	// 2. 清除缓存
+	cache, err := c.manager.GetCache("%s")
+	if err != nil {
+		return result, nil
+	}
+	
+	// 3. 生成缓存 Key
+	key := fmt.Sprintf("%s:%%v", %s)
+	
+	// 4. 删除缓存
+	_ = cache.Delete(context.Background(), key)
+	
+	return result, nil
+}
+`, method.Name, cachedTypeName, method.Name, params, resultTypes,
+		method.Name, argNames,
+		ann.CacheName,
+		ann.CacheName, keyExpr)
+	
+	return code
+}
+
+// generateSimplePassthroughMethod 生成简单透传方法（无缓存注解）
+func generateSimplePassthroughMethod(method *MethodInfo, cachedTypeName string) string {
+	params := buildParamList(method.Params)
+	argNames := buildArgNames(method.Params)
+	resultTypes := buildResultTypes(method.Results)
+	
+	code := fmt.Sprintf(`
+// %s 透传方法（无缓存）
+func (c *%s) %s(%s) %s {
+	return c.decorated.%s(%s)
+}
+`, method.Name, cachedTypeName, method.Name, params, resultTypes,
+		method.Name, argNames)
+	
+	return code
+}
+
+// buildParamList 构建参数列表字符串
+func buildParamList(params []ParamInfo) string {
+	var paramStrings []string
+	for i, param := range params {
+		name := param.Name
+		if name == "_" || name == "" {
+			name = fmt.Sprintf("arg%d", i)
+		}
+		paramStrings = append(paramStrings, fmt.Sprintf("%s %s", name, param.Type))
+	}
+	return strings.Join(paramStrings, ", ")
+}
+
+// buildArgNames 构建参数名称字符串（用于调用）
+func buildArgNames(params []ParamInfo) string {
+	var argNames []string
+	for i, param := range params {
+		name := param.Name
+		if name == "_" || name == "" {
+			name = fmt.Sprintf("arg%d", i)
+		}
+		argNames = append(argNames, name)
+	}
+	return strings.Join(argNames, ", ")
+}
+
+// buildResultTypes 构建返回值类型字符串
+func buildResultTypes(results []ParamInfo) string {
+	if len(results) == 0 {
+		return ""
+	}
+	if len(results) == 1 {
+		return results[0].Type
+	}
+	var resultTypes []string
+	for _, result := range results {
+		resultTypes = append(resultTypes, result.Type)
+	}
+	return "(" + strings.Join(resultTypes, ", ") + ")"
+}
+
+// buildKeyExpression 根据 SpEL 表达式构建 Key 生成代码
+// 支持：#paramName, #result.fieldName, 字符串拼接
+// 返回 key 的值部分（不包含 cache name 前缀），如：id 或 result.ID
+func buildKeyExpression(params []ParamInfo, results []ParamInfo, keyExpr string) string {
+	// 处理 #result.XXX 表达式（如：#result.Id, #result.UserID）
+	if strings.HasPrefix(keyExpr, "#result.") {
+		fieldName := strings.TrimPrefix(keyExpr, "#result.")
+		// 检查是否有返回值
+		if len(results) > 0 && results[0].Type != "error" {
+			return fmt.Sprintf(`result.%s`, fieldName)
+		}
+		// 无返回值时使用默认值
+		return `"default"`
+	}
+	
+	// 处理简单参数 #paramName
+	if strings.HasPrefix(keyExpr, "#") && !strings.Contains(keyExpr, "+") {
+		paramName := strings.TrimPrefix(keyExpr, "#")
+		return paramName
+	}
+	
+	// 处理复杂表达式：#user.Id + ':' + #status
+	if strings.Contains(keyExpr, "+") {
+		return buildComplexKeyExpression(params, keyExpr)
+	}
+	
+	// 默认：使用第一个参数
+	if len(params) == 0 {
+		return `"default"`
+	}
+	firstParam := params[0].Name
+	if firstParam == "_" || firstParam == "" {
+		return "arg0"
+	}
+	return firstParam
+}
+
+// buildComplexKeyExpression 构建复杂 Key 表达式
+// 返回拼接后的表达式，如：user.Id + ":" + status
+func buildComplexKeyExpression(params []ParamInfo, expr string) string {
+	// 简单实现：分割 + 号，处理每个部分
+	parts := strings.Split(expr, "+")
+	var valueParts []string
+	
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		// 去掉所有的 # 符号（SpEL 参数前缀）
+		part = strings.ReplaceAll(part, "#", "")
+		
+		if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") {
+			// 字符串字面量：去掉单引号，加上双引号
+			str := strings.Trim(part, "'")
+			valueParts = append(valueParts, fmt.Sprintf(`"%s"`, str))
+		} else {
+			// 参数引用或字段访问
+			valueParts = append(valueParts, part)
+		}
+	}
+	
+	return strings.Join(valueParts, " + ")
+}
+
 func countAnnotations(annotations map[string]map[string]*CacheAnnotation) int {
 	total := 0
 	for _, methods := range annotations {
 		total += len(methods)
 	}
 	return total
+}
+
+// formatCode 使用 gofmt 格式化代码
+func formatCode(code string) string {
+	formatted, err := format.Source([]byte(code))
+	if err != nil {
+		// 格式化失败，返回原始代码
+		fmt.Printf("⚠️  Code formatting failed: %v\n", err)
+		return code
+	}
+	return string(formatted)
+}
+
+// sortImports 对导入语句排序（用于生成更一致的代码）
+func sortImports(importsMap map[string]string) []string {
+	imports := make([]string, 0, len(importsMap))
+	for imp, alias := range importsMap {
+		if alias != "" {
+			imports = append(imports, fmt.Sprintf("\t%s \"%s\"", alias, imp))
+		} else {
+			imports = append(imports, fmt.Sprintf("\t\"%s\"", imp))
+		}
+	}
+	sort.Slice(imports, func(i, j int) bool {
+		return imports[i] < imports[j]
+	})
+	return imports
 }

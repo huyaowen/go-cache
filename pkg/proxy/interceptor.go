@@ -252,11 +252,20 @@ func (i *methodInterceptor) parseTTL(ttlExpr string, ctx *spel.EvaluationContext
 	if ttlExpr == "" {
 		return 30 * time.Minute
 	}
+
+	// 尝试作为 SpEL 表达式求值
 	result, err := i.evaluator.EvaluateToInt(ttlExpr, ctx)
-	if err != nil {
-		return 30 * time.Minute
+	if err == nil {
+		return time.Duration(result) * time.Second
 	}
-	return time.Duration(result) * time.Second
+
+	// 作为 duration 字符串解析
+	d, err := time.ParseDuration(ttlExpr)
+	if err == nil {
+		return d
+	}
+
+	return 30 * time.Minute
 }
 
 func (i *methodInterceptor) isTruthy(value interface{}) bool {

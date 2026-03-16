@@ -248,8 +248,28 @@ func RegisterAnnotation(manager core.CacheManager, typeName, methodName string, 
 	globalAnnotationRegistry[typeName][methodName] = annotation
 }
 
+// globalAnnotationGetter 全局注解获取函数（由 cache 包设置）
+var globalAnnotationGetter func(string) map[string]*CacheAnnotation
+
+// SetGlobalAnnotationGetter 设置全局注解获取函数
+// 由 cache 包在 init() 中调用，注册获取注解的函数
+func SetGlobalAnnotationGetter(getter func(string) map[string]*CacheAnnotation) {
+	globalAnnotationGetter = getter
+}
+
 // GetRegisteredAnnotations 获取已注册的注解
+// 优先从 cache 包的全局注册表读取（代码生成器注册的位置）
+// 回退到 proxy 包的本地注册表（向后兼容）
 func GetRegisteredAnnotations(typeName string) map[string]*CacheAnnotation {
+	// 1. 优先从 cache 包读取（代码生成器注册的位置）
+	if globalAnnotationGetter != nil {
+		cacheAnnotations := globalAnnotationGetter(typeName)
+		if cacheAnnotations != nil && len(cacheAnnotations) > 0 {
+			return cacheAnnotations
+		}
+	}
+	
+	// 2. 回退到本地注册表（向后兼容）
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 

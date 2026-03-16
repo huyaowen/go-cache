@@ -56,6 +56,8 @@ type userService struct {
 }
 
 // NewUserServiceRaw 创建原始服务（不带缓存）
+// ⚠️ 重要：必须提供构造函数或确保结构体零值可用
+// 如果结构体包含 map/slice 等字段，必须在此初始化
 func NewUserServiceRaw(db *sql.DB) *userService {
     return &userService{db: db}
 }

@@ -214,12 +214,17 @@ func (g *Generator) generateConstructor(buf *bytes.Buffer, iface *InterfaceInfo,
 
 	buf.WriteString(fmt.Sprintf(") %s {\n", iface.Name))
 
-	if svc.Constructor != nil && len(svc.Constructor.Params) > 0 {
-		args := make([]string, len(svc.Constructor.Params))
-		for i, p := range svc.Constructor.Params {
-			args[i] = p.Name
+	if svc.Constructor != nil {
+		// 使用已有的构造函数（优先）
+		if len(svc.Constructor.Params) > 0 {
+			args := make([]string, len(svc.Constructor.Params))
+			for i, p := range svc.Constructor.Params {
+				args[i] = p.Name
+			}
+			buf.WriteString(fmt.Sprintf("\traw := %s(%s)\n", svc.Constructor.Name, strings.Join(args, ", ")))
+		} else {
+			buf.WriteString(fmt.Sprintf("\traw := %s()\n", svc.Constructor.Name))
 		}
-		buf.WriteString(fmt.Sprintf("\traw := %s(%s)\n", svc.Constructor.Name, strings.Join(args, ", ")))
 	} else {
 		buf.WriteString(fmt.Sprintf("\traw := &%s{}\n", svc.TypeName))
 	}

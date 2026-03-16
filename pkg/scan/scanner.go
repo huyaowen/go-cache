@@ -446,13 +446,22 @@ func (s *Scanner) parseAnnotation(comment string) *AnnotationInfo {
 		Type: matches[1],
 	}
 
-	start := strings.Index(comment, "(")
-	end := strings.LastIndex(comment, ")")
+	// 从注解位置开始查找配对的括号
+	// 先找到注解在 comment 中的位置
+	annotationStart := strings.Index(comment, matches[0])
+	if annotationStart == -1 {
+		return nil
+	}
+	
+	// 从注解位置查找括号
+	rest := comment[annotationStart:]
+	start := strings.Index(rest, "(")
+	end := strings.LastIndex(rest, ")")
 	if start == -1 || end == -1 || end <= start {
 		return nil
 	}
 
-	paramsStr := comment[start+1 : end]
+	paramsStr := rest[start+1 : end]
 	params := parseAnnotationParams(paramsStr)
 
 	for key, value := range params {

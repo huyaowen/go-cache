@@ -9,8 +9,11 @@ import (
 
 func main() {
 	// 创建服务实例（自动使用全局缓存管理器）
-	userSvc := service.NewUserService()
-	orderSvc := service.NewOrderService()
+	service.InitUserService()
+	service.InitOrderService()
+	
+	userSvc := service.UserService
+	orderSvc := service.OrderService
 
 	// 测试用户服务
 	user, err := userSvc.GetUser(1)

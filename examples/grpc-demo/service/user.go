@@ -1,6 +1,6 @@
 package service
 
-//go:generate go run ../../../cmd/generator/main.go .
+//go:generate go run ../../../cmd/gocache/main.go scan .
 
 import (
 	"fmt"

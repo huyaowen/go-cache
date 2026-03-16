@@ -224,9 +224,15 @@ func (g *Generator) generateConstructor(buf *bytes.Buffer, iface *InterfaceInfo,
 		buf.WriteString(fmt.Sprintf("\traw := &%s{}\n", svc.TypeName))
 	}
 
+	buf.WriteString("\n")
+	buf.WriteString("\tmanager := cache.GetGlobalManager()\n")
+	buf.WriteString("\tif manager == nil {\n")
+	buf.WriteString("\t\tpanic(\"go-cache: global CacheManager not initialized. Call cache.SetGlobalManager() first or ensure cache.Manager is imported.\")\n")
+	buf.WriteString("\t}\n")
+	buf.WriteString("\n")
 	buf.WriteString("\treturn &" + structName + "{\n")
 	buf.WriteString("\t\traw:       raw,\n")
-	buf.WriteString("\t\tmanager:   cache.GetGlobalManager(),\n")
+	buf.WriteString("\t\tmanager:   manager,\n")
 	buf.WriteString("\t\tevaluator: spel.NewSpELEvaluator(),\n")
 	buf.WriteString("\t}\n")
 	buf.WriteString("}\n\n")
@@ -308,6 +314,13 @@ func (g *Generator) generateMethod(buf *bytes.Buffer, iface *InterfaceInfo, svc 
 
 // generateCacheableMethod 生成 cacheable 方法
 func (g *Generator) generateCacheableMethod(buf *bytes.Buffer, methodSpec *MethodSpec, methodInfo *MethodInfo) {
+	buf.WriteString("\tif c.manager == nil {\n")
+	buf.WriteString("\t\tpanic(\"go-cache: CacheManager is nil. This should not happen.\")\n")
+	buf.WriteString("\t}\n")
+	buf.WriteString("\tif c.evaluator == nil {\n")
+	buf.WriteString("\t\tpanic(\"go-cache: SpELEvaluator is nil. This should not happen.\")\n")
+	buf.WriteString("\t}\n")
+	buf.WriteString("\n")
 	buf.WriteString("\tctx := context.Background()\n")
 	buf.WriteString(fmt.Sprintf("\tcache, _ := c.manager.GetCache(\"%s\")\n\n", methodInfo.Cache))
 
@@ -370,6 +383,13 @@ func (g *Generator) generateCacheableMethod(buf *bytes.Buffer, methodSpec *Metho
 
 // generateCachePutMethod 生成 cacheput 方法
 func (g *Generator) generateCachePutMethod(buf *bytes.Buffer, methodSpec *MethodSpec, methodInfo *MethodInfo) {
+	buf.WriteString("\tif c.manager == nil {\n")
+	buf.WriteString("\t\tpanic(\"go-cache: CacheManager is nil. This should not happen.\")\n")
+	buf.WriteString("\t}\n")
+	buf.WriteString("\tif c.evaluator == nil {\n")
+	buf.WriteString("\t\tpanic(\"go-cache: SpELEvaluator is nil. This should not happen.\")\n")
+	buf.WriteString("\t}\n")
+	buf.WriteString("\n")
 	buf.WriteString("\tctx := context.Background()\n")
 	buf.WriteString(fmt.Sprintf("\tcache, _ := c.manager.GetCache(\"%s\")\n\n", methodInfo.Cache))
 
@@ -415,6 +435,13 @@ func (g *Generator) generateCachePutMethod(buf *bytes.Buffer, methodSpec *Method
 
 // generateCacheEvictMethod 生成 cacheevict 方法
 func (g *Generator) generateCacheEvictMethod(buf *bytes.Buffer, methodSpec *MethodSpec, methodInfo *MethodInfo) {
+	buf.WriteString("\tif c.manager == nil {\n")
+	buf.WriteString("\t\tpanic(\"go-cache: CacheManager is nil. This should not happen.\")\n")
+	buf.WriteString("\t}\n")
+	buf.WriteString("\tif c.evaluator == nil {\n")
+	buf.WriteString("\t\tpanic(\"go-cache: SpELEvaluator is nil. This should not happen.\")\n")
+	buf.WriteString("\t}\n")
+	buf.WriteString("\n")
 	buf.WriteString("\tctx := context.Background()\n")
 	buf.WriteString(fmt.Sprintf("\tcache, _ := c.manager.GetCache(\"%s\")\n\n", methodInfo.Cache))
 
